@@ -1,0 +1,42 @@
+# Build artifacts
+build-full/
+build-relinker/
+*.o
+*.obj
+*.exe
+*.dll
+*.a
+*.lib
+*.pdb
+*.idb
+
+# Temporary test/debug artifacts
+_nid_test/
+_nid_test2/
+analyze_crash.py
+check_0x64aa31.py
+check_0x64b230.py
+check_0x8f2f70.py
+check_0x8ff270.py
+check_getproc.py
+check_getproc.pyX
+check_targets.py
+
+# IDE
+.vscode/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Generated PRX stubs
+libs/*.prx
+
+# Prebuilt toolchain (not part of source)
+mingw15/
+
+# Large binary not suitable for GitHub
+winlibs-15.2.0.zip

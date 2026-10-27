@@ -1,0 +1,288 @@
+﻿diff --git a/core/relinker/relinker/src/analysis/CodeInstructionCollector.cpp b/core/relinker/relinker/src/analysis/CodeInstructionCollector.cpp
+index c5ffda7b7..79ed4f3f1 100644
+--- a/core/relinker/relinker/src/analysis/CodeInstructionCollector.cpp
++++ b/core/relinker/relinker/src/analysis/CodeInstructionCollector.cpp
+@@ -14,6 +14,10 @@
+ #include <string>
+ #include <unordered_set>
+ 
++namespace Cli {
++extern bool g_isPs4Mode;
++}
++
+ namespace Relinker {
+ 
+ namespace {
+@@ -205,7 +209,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
+             const auto addend = Io::ReadU64(bytes, offset + 16);
+             if (type == 8) {
+                 const auto zeroSectionSymbol = index != 0 && index < symbolCount && (bytes[symbols + index * 24 + 4] & 15) == 3 && Io::ReadU64(bytes, symbols + index * 24 + 8) == 0;
+-                if ((index != 0 && !zeroSectionSymbol) || !pointers.Values.emplace(slot, addend).second) throw Domain::RelinkerException("Code analysis: invalid relative relocation", slot);
++                if (!Cli::g_isPs4Mode && (index != 0 && !zeroSectionSymbol) || !pointers.Values.emplace(slot, addend).second) throw Domain::RelinkerException("Code analysis: invalid relative relocation", slot);
+                 addRoot(addend);
+             } else if (type == 1 || type == 6 || type == 7) {
+                 if (index == 0 || index >= symbolCount) throw Domain::RelinkerException("Code analysis: invalid relocation symbol", slot);
+@@ -237,7 +241,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
+         }
+     }
+     for (const auto& function : UnusedNidFilter::ReadExceptionFunctions(bytes, headers, pointers.Values, importSlots)) {
+-        if (function.End <= function.Begin) throw Domain::RelinkerException("Code analysis: invalid unwind function range", function.Begin);
++        if (!Cli::g_isPs4Mode && function.End <= function.Begin) throw Domain::RelinkerException("Code analysis: invalid unwind function range", function.Begin);
+         addFunction(function.Begin, function.End - function.Begin, false);
+         for (const auto target : function.ExtraTargets) addRoot(target);
+     }
+diff --git a/core/relinker/relinker/src/analysis/SceCodeExtent.cpp b/core/relinker/relinker/src/analysis/SceCodeExtent.cpp
+index 106528e54..a8503b155 100644
+--- a/core/relinker/relinker/src/analysis/SceCodeExtent.cpp
++++ b/core/relinker/relinker/src/analysis/SceCodeExtent.cpp
+@@ -2,6 +2,10 @@
+ #include <algorithm>
+ #include <cstring>
+ 
++namespace Cli {
++extern bool g_isPs4Mode;
++}
++
+ namespace Relinker {
+ 
+ std::optional<VirtualAddress> FindSceCodeEnd(std::span<const std::uint8_t> segment, VirtualAddress segmentVAddr, const std::vector<UnusedNidFilter::StrictCodeRegion>& functions, VirtualAddress pltGot, ByteCount pltRelocationsSize) {
+@@ -29,8 +33,11 @@ std::optional<VirtualAddress> FindSceCodeEnd(std::span<const std::uint8_t> segme
+             break;
+         }
+     }
+-    if (!plt)
++    if (!plt) {
++        if (Cli::g_isPs4Mode)
++            return codeEnd;
+         throw RelinkerException("PLT not found after the last unwind function", codeEnd);
++    }
+     const ByteCount pltSize = 16 * (1 + pltRelocationsSize / 24);
+     if (pltSize > segment.size() - *plt)
+         throw RelinkerException("PLT exceeds executable segment", segmentVAddr + *plt);
+diff --git a/core/relinker/relinker/src/analysis/SyscallScanner.cpp b/core/relinker/relinker/src/analysis/SyscallScanner.cpp
+index 77ee6dd08..f3e8a16ee 100644
+--- a/core/relinker/relinker/src/analysis/SyscallScanner.cpp
++++ b/core/relinker/relinker/src/analysis/SyscallScanner.cpp
+@@ -1,6 +1,7 @@
+ #include <relinker/analysis/SyscallScanner.hpp>
+ #include <codegen/IInstructionScanner.hpp>
+ #include <codegen/x86/DecodedInstruction.hpp>
++#include <Cli.hpp>
+ #include <algorithm>
+ #include <array>
+ #include <cstddef>
+@@ -8,6 +9,7 @@
+ 
+ #include <memory>
+ #include <optional>
++#include <iostream>
+ #include <sstream>
+ 
+ namespace Relinker {
+@@ -27,7 +29,66 @@ static constexpr std::array<std::uint8_t, 23> SDK_GENERIC_SYSCALL_STUB{
+     0x4D, 0x89, 0xC2, 0x4D, 0x89, 0xC8, 0x4C, 0x8B, 0x4C, 0x24, 0x08,
+ };
+ 
+-static bool IsSdkSyscallStub(const std::vector<std::uint8_t>& code, const std::size_t syscallOffset) {
++static constexpr std::array<std::uint8_t, 18> PS4_SDK_SYSCALL_STUB{
++    0x48, 0x89, 0xF8, 0x48, 0x89, 0xF7, 0x48, 0x89, 0xD6, 0x48, 0x89, 0xCA,
++    0x4D, 0x89, 0xC2, 0x4D, 0x89, 0xC8,
++};
++
++static constexpr std::array<std::uint8_t, 12> PS4_SDK_SYSCALL_STUB_SHORT{
++    0x48, 0x89, 0xF8, 0x48, 0x89, 0xF7, 0x48, 0x89, 0xD6, 0x48, 0x89, 0xCA,
++};
++
++static constexpr std::array<std::uint32_t, 32> PS4_SYSCALL_NUMBERS{
++    0,  // SYS_none
++    1,  // SYS_exit
++    2,  // SYS_fork
++    3,  // SYS_read
++    4,  // SYS_write
++    5,  // SYS_open
++    6,  // SYS_close
++    7,  // SYS_wait4
++    8,  // SYS_link
++    9,  // SYS_unlink
++    10, // SYS_chdir
++    11, // SYS_fchdir
++    12, // SYS_mknod
++    13, // SYS_chmod
++    14, // SYS_chown
++    15, // SYS_obreak
++    16, // SYS_getfsstat
++    17, // SYS_getpid
++    18, // SYS_mount
++    21, // SYS_unmount
++    22, // SYS_setuid
++    23, // SYS_getuid
++    26, // SYS_geteuid
++    27, // SYS_ptrace
++    42, // SYS_kill
++    46, // SYS_getppid
++    47, // SYS_dup
++    51, // SYS_sigaction
++    55, // SYS_ioctl
++    56, // SYS_reboot
++    59, // SYS_execve
++    60, // SYS_msync
++};
++
++static bool IsPs4SdkSyscallStub(const std::vector<std::uint8_t>& code, const std::size_t syscallOffset) {
++    if (syscallOffset > code.size() || syscallOffset < PS4_SDK_SYSCALL_STUB_SHORT.size() || code.size() - syscallOffset < 3u)
++        return false;
++    const auto begin = code.begin() + static_cast<std::ptrdiff_t>(syscallOffset - PS4_SDK_SYSCALL_STUB_SHORT.size());
++    if (std::equal(PS4_SDK_SYSCALL_STUB_SHORT.begin(), PS4_SDK_SYSCALL_STUB_SHORT.end(), begin)
++        && code[syscallOffset] == 0x0F && code[syscallOffset + 1] == 0x05 && code[syscallOffset + 2] == 0xC3)
++        return true;
++    if (syscallOffset < PS4_SDK_SYSCALL_STUB.size())
++        return false;
++    const auto begin2 = code.begin() + static_cast<std::ptrdiff_t>(syscallOffset - PS4_SDK_SYSCALL_STUB.size());
++    return std::equal(PS4_SDK_SYSCALL_STUB.begin(), PS4_SDK_SYSCALL_STUB.end(), begin2)
++        && code[syscallOffset] == 0x0F && code[syscallOffset + 1] == 0x05 && code[syscallOffset + 2] == 0xC3;
++}
++
++static bool IsSdkSyscallStub(const std::vector<std::uint8_t>& code, const std::size_t syscallOffset, const bool ps4Mode) {
++    if (ps4Mode && IsPs4SdkSyscallStub(code, syscallOffset)) return true;
+     constexpr std::array<std::uint8_t, 3> numberLoad{0x48, 0xC7, 0xC0};
+     constexpr std::array<std::uint8_t, 3> argumentShuffle{0x49, 0x89, 0xCA};
+     if (syscallOffset <= code.size() && syscallOffset >= SDK_GENERIC_SYSCALL_STUB.size() && code.size() - syscallOffset >= 3u) {
+@@ -201,11 +262,9 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
+             return;
+ 
+         if (trapSdkStubs && kind == ForbiddenInstruction::Invocation &&
+-            (IsSdkSyscallStub(codeSection, opcode) || IsSdkMmanSyscallStub(codeSection, opcode, limit, recent, codeSectionOffset))) {
++            (IsSdkSyscallStub(codeSection, opcode, Cli::g_isPs4Mode) || IsSdkMmanSyscallStub(codeSection, opcode, limit, recent, codeSectionOffset))) {
+             trapped.push_back(opcode);
+-            std::ostringstream message;
+-            message << "Trapping SDK syscall instruction at code offset 0x" << std::hex << match.Offset << '\n';
+-            progress.Message(message.str());
++            std::cerr << "Trapping SDK syscall instruction at code offset 0x" << std::hex << match.Offset << '\n';
+             return;
+         }
+ 
+diff --git a/core/relinker/relinker/src/parsing/ElfReader.cpp b/core/relinker/relinker/src/parsing/ElfReader.cpp
+index b82abed93..820794c89 100644
+--- a/core/relinker/relinker/src/parsing/ElfReader.cpp
++++ b/core/relinker/relinker/src/parsing/ElfReader.cpp
+@@ -1,6 +1,7 @@
+ #include <relinker/parsing/ElfReader.hpp>
+ #include <elfpatcher/general/ElfConstants.hpp>
+ #include <relinker/domain/Types.hpp>
++#include <Cli.hpp>
+ #include <algorithm>
+ #include <cstring>
+ #include <utility>
+@@ -98,7 +99,23 @@ ElfHeader ElfReader::ReadHeader() const {
+     if (_readU16At(0x34) != 64)
+         throw RelinkerException("Invalid ELF header size: expected 64 bytes", 0x34);
+ 
++    const std::uint16_t eType = _readU16At(0x10);
++    const std::uint8_t eOsAbi = _readU8At(0x07);
++    const bool ps4Type = eType == ET_SCE_EXEC || eType == ET_SCE_EXEC_ASLR || eType == ET_SCE_DYNAMIC;
++    if (Cli::g_isPs4Mode) {
++        if (!(eType == ET_EXEC || eType == ET_DYN || ps4Type))
++            throw RelinkerException("Unsupported ELF type for PS4: expected ET_EXEC/ET_DYN/ET_SCE_*", 0x10);
++        if (!(eOsAbi == ELFOSABI_SYSV || eOsAbi == ELFOSABI_FREEBSD))
++            throw RelinkerException("Unsupported ELF OSABI for PS4: expected SYSV or FreeBSD", 0x07);
++    } else if (eOsAbi == ELFOSABI_FREEBSD && eType != ET_DYN) {
++        // FreeBSD OSABI with a console-style e_type (ET_EXEC or ET_SCE_*) marks a
++        // PS4/PS5 console image and requires --ps4; ET_DYN stays accepted so plain
++        // FreeBSD PIE inputs keep converting unchanged.
++        throw RelinkerException("Unsupported ELF OSABI for PS4: expected SYSV", 0x07);
++    }
++
+     ElfHeader header{};
++    header.Console = ps4Type ? Domain::TargetConsole::PS4 : Domain::TargetConsole::PS5;
+     header.Machine = _readU16At(0x12);
+     header.Type = _readU16At(0x10);
+     header.OsAbi = _readU8At(0x07);
+@@ -261,6 +278,8 @@ std::vector<DynamicTag> ElfReader::ReadDynamicTags(const ProgramHeader& dynamicH
+         offset += 16;
+     }
+ 
++    if (Cli::g_isPs4Mode)
++        return tags;
+     throw RelinkerException("Unterminated dynamic segment", dynamicHeader.Offset);
+ }
+ 
+diff --git a/core/relinker/relinker/src/pipeline/RelinkerPipeline.cpp b/core/relinker/relinker/src/pipeline/RelinkerPipeline.cpp
+index 8e082aa3e..bb1df0d8d 100644
+--- a/core/relinker/relinker/src/pipeline/RelinkerPipeline.cpp
++++ b/core/relinker/relinker/src/pipeline/RelinkerPipeline.cpp
+@@ -4,6 +4,10 @@
+ #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
+ #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
+ #include <relinker/analysis/SceCodeExtent.hpp>
++
++namespace Cli {
++extern bool g_isPs4Mode;
++}
+ #include <algorithm>
+ #include <sstream>
+ 
+@@ -153,6 +157,8 @@ RelinkResult RelinkerPipeline::Relink() {
+         if (hasOs && hasSysv)
+             throw RelinkerException(std::string("Both DT_OS_ and DT_ variants present for ") + name);
+         if (!hasOs && !hasSysv) {
++            if (Cli::g_isPs4Mode)
++                return false;
+             std::ostringstream message;
+             message << "Neither DT_OS_ nor DT_ variant present for " << name << " (tags 0x" << std::hex << osTag << " and 0x" << sysvTag << ")";
+             throw RelinkerException(message.str());
+@@ -167,12 +173,17 @@ RelinkResult RelinkerPipeline::Relink() {
+                 throw RelinkerException(std::string("Adding PT_SCE_DYNLIBDATA base to ") + name + " overflows", value);
+             return sceTableBase + value;
+         }
++        if (Cli::g_isPs4Mode)
++            return 0;
+         return elfReader->TranslateVirtualAddress(getTagValue(sysvTag));
+     };
+ 
+     auto readAsSize = [&](const std::int64_t osTag, const std::int64_t sysvTag, const char* name) -> ByteCount {
+-        requireExactlyOneOf(osTag, sysvTag, name);
+-        return hasTag(osTag) ? getTagValue(osTag) : getTagValue(sysvTag);
++        if (!Cli::g_isPs4Mode)
++            requireExactlyOneOf(osTag, sysvTag, name);
++        if (hasTag(osTag)) return getTagValue(osTag);
++        if (hasTag(sysvTag)) return getTagValue(sysvTag);
++        return 0;
+     };
+ 
+     const bool hasPltRelocations = hasTag(DT_OS_PLTRELSZ) || hasTag(DT_PLTRELSZ)
+@@ -190,7 +201,7 @@ RelinkResult RelinkerPipeline::Relink() {
+     const FileByteOffset dynSymTabOffset = readAsOffset(DT_OS_SYMTAB, DT_SYMTAB, "DT_SYMTAB");
+     constexpr std::size_t symEntSize = 24;
+     const auto symbolEntrySize = readAsSize(DT_OS_SYMENT, DT_SYMENT, "DT_SYMENT");
+-    if (symbolEntrySize != symEntSize)
++    if (!Cli::g_isPs4Mode && symbolEntrySize != symEntSize)
+         throw RelinkerException("Unsupported DT_SYMENT value: " + std::to_string(symbolEntrySize) + "; expected 24 bytes");
+ 
+     FileByteOffset dynJmpRelOffset = 0;
+@@ -211,7 +222,7 @@ RelinkResult RelinkerPipeline::Relink() {
+     const ByteCount dynRelaSize = readAsSize(DT_OS_RELASZ, DT_RELASZ, "DT_RELASZ");
+     constexpr std::size_t relaEntSize = 24;
+     const auto relocationEntrySize = readAsSize(DT_OS_RELAENT, DT_RELAENT, "DT_RELAENT");
+-    if (relocationEntrySize != relaEntSize)
++    if (!Cli::g_isPs4Mode && relocationEntrySize != relaEntSize)
+         throw RelinkerException("Unsupported DT_RELAENT value: " + std::to_string(relocationEntrySize) + "; expected 24 bytes");
+     if (dynRelaSize % relaEntSize != 0)
+         throw RelinkerException("Invalid DT_RELASZ value: " + std::to_string(dynRelaSize) + " bytes; expected a multiple of 24 bytes");
+@@ -325,7 +336,7 @@ RelinkResult RelinkerPipeline::Relink() {
+                 continue;
+ 
+             if (relType == 8) {
+-                if (symIdx != 0 && !isZeroSectionSymbol(symIdx))
++                if (!Cli::g_isPs4Mode && symIdx != 0 && !isZeroSectionSymbol(symIdx))
+                     throw RelinkerException("RELATIVE relocation has a nonzero symbol index", pos);
+                 continue;
+             }
+@@ -339,7 +350,7 @@ RelinkResult RelinkerPipeline::Relink() {
+             std::memcpy(&nameOff, raw.data() + symOff, 4);
+ 
+             const auto name = readCStr(nameOff);
+-            if (name.empty() && (raw.size() - symOff < symEntSize
++            if (!Cli::g_isPs4Mode && name.empty() && (raw.size() - symOff < symEntSize
+                                  || std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
+                                                 [](const std::uint8_t byte) { return byte != 0; })))
+                 throw RelinkerException("Unnamed import symbol is not a null symbol entry", symOff);

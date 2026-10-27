@@ -1,0 +1,2 @@
+@echo off
+"c:\PersonalProjects\AnyPs4\AnyPS4\build-full\core\libs\nid_patcher.exe" libc --list-exports "c:\PersonalProjects\AnyPs4\AnyPS4\build-full\core\libs\libs\unpatched\libc.prx" 2>&1 | findstr /i "L1SBTkC abort"

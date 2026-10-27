@@ -1,0 +1,22 @@
+{
+  "pkg_folder": "C:/Users/Info-Tech/Downloads/Games/ps4",
+  "output_folder": "C:/Users/Info-Tech/Downloads/Games/ps4/export",
+  "temp_folder": "C:/Users/Info-Tech/Downloads/Games/ps4/temp",
+  "relinker_path": "c:\\PersonalProjects\\AnyPs4\\tools-fetch\\..\\AnyPS4\\build-relinker\\core\\relinker\\relinker.exe",
+  "nid_patcher_path": "C:\\PersonalProjects\\AnyPs4\\AnyPS4\\build-full\\core\\libs\\nid_patcher.exe",
+  "passcode": "00000000000000000000000000000000",
+  "skip_sce_module": true,
+  "copy_prx": true,
+  "targets": [
+    "windows"
+  ],
+  "prx_source_dir": "C:\\PersonalProjects\\AnyPs4\\AnyPS4\\build-full\\core\\libs\\libs/unpatched",
+  "patch_nids": true,
+  "import_folder": "C:/Users/Info-Tech/Downloads/Games/ps4",
+  "relink_input": "C:/Users/Info-Tech/Downloads/Games/ps4",
+  "relink_output": "C:/Users/Info-Tech/Downloads/Games/ps4/export",
+  "target_windows": true,
+  "output_targets": [
+    "windows"
+  ]
+}
