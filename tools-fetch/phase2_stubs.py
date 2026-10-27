@@ -125,14 +125,51 @@ def build_notimplemented_stub_dll(dll_name, export_names, output_path, nid_db=No
     else:
         export_entries = [(n, n) for n in export_names]
 
-    thunk = b"\x48\x31\xc0\xc3"
+    # Build per-export log strings: "NID=<orig> NAME=<disp>\n"
+    log_strings = {}  # name -> (offset_in_log_string_data, length)
+    log_string_data = bytearray()
+    for orig_name, disp_name in export_entries:
+        log_str = f"NID={orig_name} NAME={disp_name}\n".encode("ascii")
+        log_strings[orig_name] = (len(log_string_data), len(log_str))
+        log_string_data.extend(log_str)
+
+    # Pre-compute log string offsets within .rdata (after DLL name + export names)
+    log_string_offsets = {}
+    rdata_offset = len(dll_name.encode("ascii") + b"\x00")
+    for name in sorted(export_names):
+        rdata_offset += len(name.encode("ascii") + b"\0")
+    for orig_name in sorted(export_names):
+        log_string_offsets[orig_name] = rdata_offset
+        rdata_offset += log_strings[orig_name][1]
+
+    # Thunk: lea rcx, [rip+disp32] -> log string; call OutputDebugStringA; xor rax, rax; ret
     text_data = bytearray()
     thunk_offsets = {}
-    for name in export_names:
-        thunk_offsets[name] = len(text_data)
-        text_data.extend(thunk)
+    thunk_fixups = []  # (text_offset_for_disp32, kind, export_name)
+    for orig_name, disp_name in export_entries:
+        thunk_start = len(text_data)
+        thunk_offsets[orig_name] = thunk_start
+        # lea rcx, [rip + disp32] -> log string
+        text_data.extend(b"\x48\x8d\x0d")
+        fixup_str = len(text_data)
+        text_data.extend(b"\x00\x00\x00\x00")
+        thunk_fixups.append((fixup_str, 'log_string', orig_name))
+        # call OutputDebugStringA (IAT[0])
+        text_data.extend(b"\xff\x15")
+        fixup_ods = len(text_data)
+        text_data.extend(b"\x00\x00\x00\x00")
+        thunk_fixups.append((fixup_ods, 'ods_iat', orig_name))
+        # xor rax, rax
+        text_data.extend(b"\x48\x31\xc0")
+        # ret
+        text_data.extend(b"\xc3")
     while len(text_data) % 16 != 0:
         text_data.append(0)
+
+    text_vsize = len(text_data)
+    text_vaddr = 0x1000
+    text_vend = text_vaddr + text_vsize
+    rdata_vaddr = ((text_vend + 0xfff) & ~0xfff)
 
     rdata = bytearray()
     name_offsets = {}
@@ -140,6 +177,9 @@ def build_notimplemented_stub_dll(dll_name, export_names, output_path, nid_db=No
     for name in sorted(export_names):
         name_offsets[name] = len(rdata)
         rdata.extend(name.encode("ascii") + b"\0")
+    # Append log strings after export names (offsets pre-computed above)
+    for orig_name in sorted(export_names):
+        rdata.extend(log_string_data[log_strings[orig_name][0]:log_strings[orig_name][0] + log_strings[orig_name][1]])
     while len(rdata) % 4 != 0:
         rdata.append(0)
 
@@ -147,10 +187,6 @@ def build_notimplemented_stub_dll(dll_name, export_names, output_path, nid_db=No
     num_exp = len(export_names)
     sorted_names = sorted(export_names)
 
-    text_vsize = len(text_data)
-    text_vaddr = 0x1000
-    text_vend = text_vaddr + text_vsize
-    rdata_vaddr = ((text_vend + 0xfff) & ~0xfff)
     rdata_vend = rdata_vaddr + rdata_vsize
 
     eat = bytearray()
@@ -194,6 +230,53 @@ def build_notimplemented_stub_dll(dll_name, export_names, output_path, nid_db=No
     edata.extend(eat)
     edata.extend(nt)
     edata.extend(ot)
+    # ------------------------------------------------------------------
+    # .idata section: OutputDebugStringA import from kernel32.dll
+    # ------------------------------------------------------------------
+    idata = bytearray()
+    # Import Lookup Table: 1 entry + null terminator
+    ilt_start = len(idata)
+    idata.extend(struct.pack("<Q", 0))  # placeholder
+    # Import Address Table: 1 entry + null terminator
+    iat_start = len(idata)
+    idata.extend(struct.pack("<Q", 0))  # placeholder
+    # Hint/Name Table: WORD hint + "OutputDebugStringA\x00"
+    hint_name_start = len(idata)
+    idata.extend(struct.pack("<H", 0))
+    idata.extend(b"OutputDebugStringA\x00")
+    while len(idata) % 2 != 0:
+        idata.append(0)
+    # DLL name: "KERNEL32.dll\x00"
+    dll_name_start = len(idata)
+    idata.extend(b"KERNEL32.dll\x00")
+    while len(idata) % 2 != 0:
+        idata.append(0)
+    # Import Descriptor (20 bytes)
+    import_desc_start = len(idata)
+    idata.extend(struct.pack("<IIIII", 0, 0, 0, 0, 0))  # placeholder
+    # Null import descriptor (terminator)
+    idata.extend(struct.pack("<IIIII", 0, 0, 0, 0, 0))
+    idata_vsize = len(idata)
+    idata_vaddr = ((edata_vaddr + edata_vsize + 0xfff) & ~0xfff)
+    # Fix up idata entries
+    struct.pack_into("<Q", idata, ilt_start, idata_vaddr + hint_name_start)
+    struct.pack_into("<Q", idata, iat_start, idata_vaddr + hint_name_start)
+    struct.pack_into("<I", idata, import_desc_start + 0, idata_vaddr + ilt_start)
+    struct.pack_into("<I", idata, import_desc_start + 16, idata_vaddr + dll_name_start)
+    struct.pack_into("<I", idata, import_desc_start + 20, idata_vaddr + iat_start)
+
+    # Fix up thunk disp32 placeholders
+    for text_offset, kind, orig_name in thunk_fixups:
+        thunk_va = text_vaddr + text_offset
+        if kind == 'log_string':
+            target_rva = rdata_vaddr + log_string_offsets[orig_name]
+        elif kind == 'ods_iat':
+            target_rva = idata_vaddr + iat_start
+        else:
+            raise ValueError(f"Unknown fixup kind: {kind}")
+        disp32 = target_rva - (text_vaddr + text_offset + 4)
+        struct.pack_into("<i", text_data, text_offset, disp32)
+
     dos = bytearray(64)
     dos[0:2] = b"MZ"
     dos_stub = b"This program cannot be run in DOS mode\r\n\x00"
@@ -209,7 +292,7 @@ def build_notimplemented_stub_dll(dll_name, export_names, output_path, nid_db=No
     opt_offset = coff_offset + 20
     sec_offset = opt_offset + 240
 
-    text_raw = sec_offset + 120
+    text_raw = sec_offset + 4 * 40
     text_raw_aligned = text_raw
     while text_raw_aligned % 0x200 != 0:
         text_raw_aligned += 1
@@ -224,7 +307,11 @@ def build_notimplemented_stub_dll(dll_name, export_names, output_path, nid_db=No
     while edata_raw_aligned % 0x200 != 0:
         edata_raw_aligned += 1
 
-    file_size = edata_raw_aligned + len(edata)
+    idata_raw = edata_raw_aligned + len(edata)
+    while idata_raw % 0x200 != 0:
+        idata_raw += 1
+
+    file_size = idata_raw + len(idata)
     while file_size % 0x200 != 0:
         file_size += 1
 
@@ -255,6 +342,14 @@ def build_notimplemented_stub_dll(dll_name, export_names, output_path, nid_db=No
     struct.pack_into("<I", sec_edata, 20, edata_raw_aligned)
     struct.pack_into("<I", sec_edata, 36, 0x40000040)
 
+    sec_idata = bytearray(40)
+    sec_idata[0:8] = b".idata\x00\x00"
+    struct.pack_into("<I", sec_idata, 8, idata_vsize)
+    struct.pack_into("<I", sec_idata, 12, idata_vaddr)
+    struct.pack_into("<I", sec_idata, 16, idata_vsize)
+    struct.pack_into("<I", sec_idata, 20, idata_raw)
+    struct.pack_into("<I", sec_idata, 36, 0x40000040)
+
     struct.pack_into("<I", dos, 0x3C, dos_end)
     file_data = bytearray(file_size)
     file_data[0:len(dos)] = dos
@@ -262,7 +357,7 @@ def build_notimplemented_stub_dll(dll_name, export_names, output_path, nid_db=No
 
     coff = bytearray(20)
     struct.pack_into("<H", coff, 0, 0x8664)
-    struct.pack_into("<H", coff, 2, 3)
+    struct.pack_into("<H", coff, 2, 4)
     struct.pack_into("<I", coff, 4, 0)
     struct.pack_into("<I", coff, 8, 0)
     struct.pack_into("<I", coff, 12, 0)
@@ -293,22 +388,26 @@ def build_notimplemented_stub_dll(dll_name, export_names, output_path, nid_db=No
     struct.pack_into("<H", opt_header, 64, 2)
     struct.pack_into("<H", opt_header, 66, 0x2000)
     struct.pack_into("<I", opt_header, 68, 16)
-    size_of_headers = sec_offset + 3 * 40
+    size_of_headers = sec_offset + 4 * 40
     struct.pack_into("<I", opt_header, 60, size_of_headers)
-    size_of_image = ((edata_vaddr + edata_vsize + 0xfff) & ~0xfff)
+    size_of_image = ((idata_vaddr + idata_vsize + 0xfff) & ~0xfff)
     struct.pack_into("<I", opt_header, 56, size_of_image)
     dd_start = 112
     struct.pack_into("<I", opt_header, dd_start + 0, edata_vaddr)
     struct.pack_into("<I", opt_header, dd_start + 4, len(edata))
+    struct.pack_into("<I", opt_header, dd_start + 8, idata_vaddr)
+    struct.pack_into("<I", opt_header, dd_start + 12, idata_vsize)
     file_data[opt_offset:opt_offset + 240] = opt_header
 
     file_data[sec_offset:sec_offset + 40] = sec_text
     file_data[sec_offset + 40:sec_offset + 80] = sec_rdata
     file_data[sec_offset + 80:sec_offset + 120] = sec_edata
+    file_data[sec_offset + 120:sec_offset + 160] = sec_idata
 
     file_data[text_raw_aligned:text_raw_aligned + len(text_data)] = text_data
     file_data[rdata_raw_aligned:rdata_raw_aligned + len(rdata)] = rdata
     file_data[edata_raw_aligned:edata_raw_aligned + len(edata)] = edata
+    file_data[idata_raw:idata_raw + len(idata)] = idata
 
     with open(output_path, "wb") as f:
         f.write(file_data)
