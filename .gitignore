@@ -40,3 +40,4 @@ mingw15/
 
 # Large binary not suitable for GitHub
 winlibs-15.2.0.zip
+libs/aerolib.csv
