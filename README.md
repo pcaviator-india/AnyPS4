@@ -32,6 +32,70 @@ Per-game progress (stage reached, open blockers, libraries and GPU coverage) is 
 
 SDL-mapped game controllers are supported, including analog sticks and triggers. Keyboard and mouse controls can be configured with an `anyps5-input.ini` file. See [input mapping](docs/user/INPUT_MAPPING.md) for the supported devices and configuration format.
 
+## Windows Porting — Current Debugging State
+
+### What we intend
+The [Windows ELF-to-PE relinker](core/relinker/elfpatcher/src/windows/) converts PS4 ELF64 x86-64 executables into native Windows PE32+ binaries. The entry stub (`WindowsEntryStubBuilder.cpp`) performs:
+
+1. Early diagnostic logging via `OutputDebugStringA` (visible in DebugView when run as Administrator)
+2. Path handling: `GetModuleFileNameW`, path copy, directory separator search, `SetCurrentDirectoryW`
+3. PRX library loading via `LoadLibraryExW` from `libs/` directory
+4. Import resolution via `GetProcAddress` for all ELF imports
+5. Argument processing: `GetCommandLineW`, `WideCharToMultiByte`, `VirtualAlloc`
+6. Vectored Exception Handler (VEH) installation before control transfer
+7. Transfer control to the ELF entry point via `call entryRva`
+
+### What works (verified via DebugView)
+All stub logging messages appear in order, confirming correct execution through the entire entry stub:
+
+```
+ELF entry stub started
+GetEnvVar called
+GetModFileName called
+GetModFileName ret
+Path copy done
+After requireNonzero
+Buffer overflow
+About to copy path
+Path copied
+Before SetCurDir
+After SetCurDir
+Loading PRXs
+PRXs loaded
+Resolving imports
+Imports resolved
+About to transfer to ELF entry point
+```
+
+### What we are up to
+Debugging a crash that occurs **after** `About to transfer to ELF entry point`, i.e., inside ELF code itself — not in the stub.
+
+### What is pending / the problem
+The ELF entry point crashes immediately with `0xC0000005` (access violation) reading a PS4 virtual address that was never relocated to a Windows address:
+
+```
+FATAL: unhandled exception 0xc0000005 on thread XXXX ''
+  rip 0x0000000140224097 app.exe+0x224097
+  read of 0x00000001c0b2e737
+```
+
+### Root cause
+`WindowsRelocationBuilder.cpp` only processes `.rela`/`.rela.plt` relocations with **defined symbols** (type 1/`R_X86_64_64`, type 6/`R_X86_64_GLOB_DAT`). If `0x1c0b2e737` is:
+- an absolute immediate embedded in an instruction (symbol index 0), or
+- in a PT_LOAD segment not covered by any relocation entry,
+
+then it remains as a raw PS4 virtual address and causes an access violation when dereferenced.
+
+### Fix applied (commit `d9d60248b`)
+- **`WindowsRelocationBuilder.cpp`**: Defined symbol relocations now compute the Windows-relocated address instead of throwing an error.
+- **`WindowsEntryStubBuilder.cpp`**: Added VEH installation before `call entryRva` to catch and log crashes via `OutputDebugStringA` ("Exception in ELF entry stub").
+
+### Remaining work
+- Determine why `0x1c0b2e737` was not covered by any relocation entry
+- Check if symbol index 0 relocations (absolute immediates) need handling
+- Verify `GetRelocatedAddress()` maps all PT_LOAD segments correctly
+- Add entry-point address + first 16 bytes logging to DebugView before transfer
+
 ## Disclaimer
 
 This project is intended for interoperability, research, preservation, and compatibility purposes. It does not include, distribute, or require copyrighted software, firmware, cryptographic keys, or proprietary libraries. Users are responsible for ensuring that any binaries used with this project are obtained and used in accordance with applicable laws and their respective license terms.
