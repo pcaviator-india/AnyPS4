@@ -1,6 +1,6 @@
 # Relinker usage
 
-[**Online relinker**](https://boykopovar.github.io/AnyPS5/) - files stay on your device.
+[**Online relinker**](https://pcaviator-india.github.io/AnyPS4/) - files stay on your device.
 
 ### Browser folder output
 

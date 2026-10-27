@@ -2,9 +2,9 @@
 
 Tool for automatic executables porting to Linux and Windows.
 
-[**Web converter**](https://boykopovar.github.io/AnyPS5/) - files stay on your device.
+[**Web converter**](https://pcaviator-india.github.io/AnyPS4/) - files stay on your device.
 
-![anyps5_collage1](https://github.com/user-attachments/assets/ed2f0b2d-33d3-46d7-ab88-767ca872fc99)
+![anyps4_collage1](https://github.com/user-attachments/assets/ed2f0b2d-33d3-46d7-ab88-767ca872fc99)
 
 Includes a [relinker](core/relinker) that converts executable to the target system's native format and implementations of [system prx libraries](core/libs/prx) suitable for dynamic linking. No emulation or separate runtime process.
 
@@ -12,11 +12,11 @@ Includes a [relinker](core/relinker) that converts executable to the target syst
 
 ## Status
 
-[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shaders](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
+[![libraries](https://pcaviator-india.github.io/AnyPS4/badge-libraries.svg)](https://pcaviator-india.github.io/AnyPS4/progress.html) [![shaders](https://pcaviator-india.github.io/AnyPS4/badge-shaders.svg)](https://pcaviator-india.github.io/AnyPS4/progress.html)
 
-[![progress map](https://boykopovar.github.io/AnyPS5/progress.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
+[![progress map](https://pcaviator-india.github.io/AnyPS4/progress.svg)](https://pcaviator-india.github.io/AnyPS4/progress.html)
 
-[Progress history](https://boykopovar.github.io/AnyPS5/history.html)
+[Progress history](https://pcaviator-india.github.io/AnyPS4/history.html)
 
 <sub>* System libraries: percentage of the functions known to the project so far (declared in [core/libs/prx](core/libs/prx)), not of every PS5 system function. The total grows as more functions are declared.</sub>
 
@@ -26,11 +26,11 @@ The [shader recompiler](core/shader/recompiler/Recompiler.cpp) successfully prod
 
 ## Compatibility
 
-Per-game progress (stage reached, open blockers, libraries and GPU coverage) is tracked on the [blocker map](https://alxcbtw.github.io/anyps5-roadmap/), a community project built from public GitHub data ([source](https://github.com/AlxcBTW/anyps5-roadmap)). Test reports go in the [Game bring-up](https://github.com/boykopovar/AnyPS5/discussions/categories/game-bring-up) discussions, one thread per title.
+Per-game progress (stage reached, open blockers, libraries and GPU coverage) is tracked on the [blocker map](https://alxcbtw.github.io/anyps5-roadmap/), a community project built from public GitHub data ([source](https://github.com/AlxcBTW/anyps5-roadmap)). Test reports go in the [Game bring-up](https://github.com/pcaviator-india/AnyPS4/discussions/categories/game-bring-up) discussions, one thread per title.
 
 ## Input mapping
 
-SDL-mapped game controllers are supported, including analog sticks and triggers. Keyboard and mouse controls can be configured with an `anyps5-input.ini` file. See [input mapping](docs/user/INPUT_MAPPING.md) for the supported devices and configuration format.
+SDL-mapped game controllers are supported, including analog sticks and triggers. Keyboard and mouse controls can be configured with an `anyps4-input.ini` file. See [input mapping](docs/user/INPUT_MAPPING.md) for the supported devices and configuration format.
 
 ## Windows Porting — Current Debugging State
 
