@@ -3,8 +3,8 @@
 NID database module for AnyPS4 Phase 2 stub generation.
 
 Loads NID -> human-readable name mappings from CSV/JSON files and provides
-bidirectional lookup. Based on the aerolib.csv format used by AnyPS5's
-nid_names.py (https://github.com/boykopovar/AnyPS5) and the sce_symbols
+bidirectional lookup. Based on the aerolib.csv format used by AnyPS4's
+nid_names.py (https://github.com/pcaviator-india/AnyPS4) and the sce_symbols
 project by zecoxao.
 
 CSV format (aerolib.csv style):
