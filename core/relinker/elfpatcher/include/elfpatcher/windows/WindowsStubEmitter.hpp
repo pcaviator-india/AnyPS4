@@ -15,6 +15,7 @@ public:
     void Rip(std::initializer_list<std::uint8_t> opcode, std::uint32_t targetRva);
     std::size_t Branch(std::initializer_list<std::uint8_t> opcode);
     void PatchBranch(std::size_t offset, std::uint32_t targetRva);
+    void WriteU32At(std::size_t offset, std::uint32_t value);
     std::uint32_t GetRva() const;
     std::vector<std::uint8_t> TakeBytes();
 

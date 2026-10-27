@@ -962,7 +962,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto vehHandlerRva = code.GetRva();
     // Patch the lea rdx placeholder: disp32 = vehHandlerRva - nextInstructionRva
     const auto vehDisp32 = static_cast<std::int32_t>(vehHandlerRva - vehHandlerCallRva);
-    Io::WriteU32(result.Code.Data, vehHandlerCallRva - result.Code.Rva - 4, static_cast<std::uint32_t>(vehDisp32));
+    code.WriteU32At(vehHandlerCallRva - result.Code.Rva - 4, static_cast<std::uint32_t>(vehDisp32));
 
     // VectoredHandler(PEXCEPTION_POINTERS* ExceptionInfo in RCX)
     code.Emit({0x50, 0x53, 0x51, 0x52, 0x56, 0x57});              // push rax, rbx, rcx, rdx, rsi, rdi

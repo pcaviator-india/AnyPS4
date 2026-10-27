@@ -40,6 +40,12 @@ void WindowsStubEmitter::PatchBranch(const std::size_t offset, const std::uint32
     Io::WriteU32(bytes, offset, static_cast<std::uint32_t>(displacement));
 }
 
+void WindowsStubEmitter::WriteU32At(const std::size_t offset, const std::uint32_t value) {
+    if (offset > bytes.size() || bytes.size() - offset < 4)
+        throw Domain::RelinkerException("Invalid write offset", offset);
+    Io::WriteU32(bytes, offset, value);
+}
+
 std::uint32_t WindowsStubEmitter::GetRva() const {
     return CheckedRva(codeRva + bytes.size());
 }
