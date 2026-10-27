@@ -225,6 +225,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto searched = addString("Searched libraries:\n");
     const auto indent = addString("  ");
     const auto enteringElf = addString("Transferring control to ELF entry point\n");
+    const auto stubStarted = addString("ELF entry stub started\n");
+    const auto aboutToTransfer = addString("About to transfer to ELF entry point\n");
     std::vector<std::uint32_t> resolvedPaths;
     for (std::size_t index = 0; index < libraries.size(); ++index)
         resolvedPaths.push_back(reserve(PathCapacity));
@@ -401,6 +403,47 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     };
 
     code.Emit({0x53, 0x55, 0x56, 0x57, 0x41, 0x54, 0x48, 0x83, 0xec, 0x60});
+
+    // ---- Jump over VEH handler, then emit handler inline ----
+    code.Emit({0xe9});                                    // jmp skip_veh_handler
+    const auto vehSkipOffset = code.Branch({});           // placeholder for disp32
+    const auto vehHandlerRva = code.GetRva();             // handler starts here
+    {
+        // VectoredExceptionHandler(PEXCEPTION_POINTERS* ExceptionInfo) -> LONG
+        code.Emit({0x50});                          // push rax
+        code.Emit({0x53});                          // push rbx
+        code.Emit({0x51});                          // push rcx
+        code.Emit({0x52});                          // push rdx
+        code.Emit({0x56});                          // push rsi
+        code.Emit({0x57});                          // push rdi
+        code.Emit({0x48, 0x8B, 0x01});              // mov rax, [rcx]        ; ExceptionRecord
+        code.Emit({0x8B, 0x00});                    // mov eax, [rax]        ; ExceptionCode
+        code.Emit({0x48, 0x8D, 0x0D});              // lea rcx, [rip + disp32]
+        code.PatchBranch(code.Branch({}), addString("Exception in ELF entry stub\n"));
+        code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+        code.Emit({0x5F});                          // pop rdi
+        code.Emit({0x5E});                          // pop rsi
+        code.Emit({0x5A});                          // pop rdx
+        code.Emit({0x59});                          // pop rcx
+        code.Emit({0x5B});                          // pop rbx
+        code.Emit({0x58});                          // pop rax
+        code.Emit({0xB8, 0x01, 0x00, 0x00, 0x00});  // mov eax, 1 (EXCEPTION_EXECUTE_HANDLER)
+        code.Emit({0xC3});                          // ret
+    }
+    code.PatchBranch(vehSkipOffset, code.GetRva());     // skip_veh_handler lands here
+
+    // ---- Earliest possible logging: stub has started ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), stubStarted);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+
+    // ---- Install VEH early, before any Windows API calls ----
+    code.Emit({0xB9, 0x01, 0x00, 0x00, 0x00});          // mov ecx, 1
+    code.Emit({0x48, 0xBA});                            // mov rdx, imm64
+    code.U64(0x140000000ULL + vehHandlerRva);           // handler VA (ImageBase + RVA)
+    call("AddVectoredExceptionHandler");
+    code.Emit({0x48, 0x89, 0x44, 0x24, 0x50});          // mov [rsp + 0x50], rax  ; save VEH handle
+
     code.Rip({0x48, 0x8d, 0x0d}, parentVariable);
     code.Rip({0x48, 0x8d, 0x15}, parentText);
     code.Emit({0x41, 0xb8, 17, 0, 0, 0});
@@ -738,53 +781,9 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto exitCallback = code.Branch({0x48, 0x8d, 0x35});
     code.Emit({0x48, 0xc7, 0x44, 0x24, 0x40, 0, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x48, 0, 0, 0, 0, 0x48, 0x8d, 0x6c, 0x24, 0x40});
 
-    // ---- Install vectored exception handler around ELF entry point transfer ----
-    const auto vehHandlerRva = code.GetRva();
-    const auto vehMsgRva = addString("Exception in ELF entry point\n");
-    const auto enteringVaMsgRva = addString("Entering ELF entry point\n");
-    {
-        // VectoredExceptionHandler(PEXCEPTION_POINTERS* ExceptionInfo) -> LONG
-        // RCX = ExceptionInfo pointer
-        code.Emit({0x50});                          // push rax
-        code.Emit({0x53});                          // push rbx
-        code.Emit({0x51});                          // push rcx
-        code.Emit({0x52});                          // push rdx
-        code.Emit({0x56});                          // push rsi
-        code.Emit({0x57});                          // push rdi
-        // rax = ExceptionRecord = [RCX]
-        code.Emit({0x48, 0x8B, 0x01});              // mov rax, [rcx]
-        // eax = ExceptionCode = [rax + 0]
-        code.Emit({0x8B, 0x00});                    // mov eax, [rax]
-        // rbx = ExceptionAddress = [rax + 16]
-        code.Emit({0x48, 0x8B, 0x58, 0x10});        // mov rbx, [rax + 0x10]
-        // Call OutputDebugStringA("Exception in ELF entry point\n")
-        code.Emit({0x48, 0x8D, 0x0D});              // lea rcx, [rip + disp32]
-        const auto vehMsgFixup = code.Branch({});   // placeholder, patched below
-        code.PatchBranch(vehMsgFixup, vehMsgRva);
-        code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
-        // Restore registers
-        code.Emit({0x5F});                          // pop rdi
-        code.Emit({0x5E});                          // pop rsi
-        code.Emit({0x5A});                          // pop rdx
-        code.Emit({0x59});                          // pop rcx
-        code.Emit({0x5B});                          // pop rbx
-        code.Emit({0x58});                          // pop rax
-        code.Emit({0xB8, 0x01, 0x00, 0x00, 0x00});  // mov eax, 1 (EXCEPTION_EXECUTE_HANDLER)
-        code.Emit({0xC3});                          // ret
-    }
-
-    // Add VEH: AddVectoredExceptionHandler(1, vehHandlerVA)
-    code.Emit({0xB9, 0x01, 0x00, 0x00, 0x00});      // mov ecx, 1
-    code.Emit({0x48, 0xBA});                        // mov rdx, imm64
-    code.U64(0x140000000ULL + vehHandlerRva);       // handler VA (assumes ImageBase)
-    call("AddVectoredExceptionHandler");
-    // RAX = VEH handle; save it for RemoveVectoredExceptionHandler
-    code.Emit({0x48, 0x89, 0x44, 0x24, 0x50});      // mov [rsp + 0x50], rax
-
-    // Log: "Entering ELF entry point\n"
+    // ---- Log "About to transfer to ELF entry point" ----
     code.Emit({0x48, 0x8D, 0x0D});                  // lea rcx, [rip + disp32]
-    const auto enteringVaMsgFixup = code.Branch({});
-    code.PatchBranch(enteringVaMsgFixup, enteringVaMsgRva);
+    code.PatchBranch(code.Branch({}), aboutToTransfer);
     code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
 
     // ---- Transfer control to ELF entry point ----
