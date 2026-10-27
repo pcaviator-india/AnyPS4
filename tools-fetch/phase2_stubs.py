@@ -9,6 +9,8 @@ import os
 import struct
 from pathlib import Path
 
+from nid_db import NidDatabase, is_nid, resolve_nid
+
 
 def pe_imports(path):
     """Return {dll_name: [imported function names]} for a PE file (no external deps)."""
@@ -145,14 +147,32 @@ def prx_export_names(prx_path):
     return names
 
 
-def build_notimplemented_stub_dll(dll_name, export_names, output_path):
+def build_notimplemented_stub_dll(dll_name, export_names, output_path, nid_db=None):
     """Build a minimal x64 PE DLL that exports each name in export_names.
 
     Instead of returning 0 (NULL) from all stubs, exports return a pointer to
     a fake vtable in .rdata. The fake vtable contains pointers to "return 0"
     thunks, so any virtual method call on a stub-returned object safely
     returns 0 instead of crashing on a NULL vtable dereference.
+
+    If *nid_db* is provided, export names that look like PS4 NIDs are resolved
+    to their human-readable names before building the stub. Stubs then export
+    the real name (e.g. ``sceGnmRegisterMemory``) instead of the raw NID
+    (e.g. ``+AFvOEXrKJk``). Names that cannot be resolved are kept unchanged.
     """
+    # Resolve NIDs to human-readable names when a database is provided
+    resolved_names = []
+    resolved_map = {}  # raw_nid -> real_name
+    if nid_db:
+        for name in export_names:
+            real = nid_db.resolve_name(name)
+            resolved_names.append(real)
+            if real != name:
+                resolved_map[name] = real
+        export_names = resolved_names
+        if resolved_map:
+            print(f"  NID resolution: {len(resolved_map)} of {len(resolved_names)} "
+                  f"names resolved from database")
     # "return 0" thunk used for fake vtable entries
     ret_zero_thunk = b"\x48\x31\xc0\xc3"  # xor rax, rax; ret
 
@@ -517,12 +537,26 @@ def find_unresolved_imports(export_dir, libs_dir):
     return {"unresolved_imports.prx": missing}
 
 
-def create_missing_prx_stubs(export_dir, log_cb=print):
-    """Phase 2: Create NotImplemented stub DLLs for unresolved imports."""
+def create_missing_prx_stubs(export_dir, log_cb=print, nid_db_path=None):
+    """Phase 2: Create NotImplemented stub DLLs for unresolved imports.
+
+    If *nid_db_path* is provided, load a NID database (CSV or JSON) and
+    resolve NID names to human-readable names before building stubs.
+    """
     libs_dir = os.path.join(export_dir, "libs")
     if not os.path.isdir(libs_dir):
         log_cb("  SKIP Phase 2: export/libs/ not found")
         return
+
+    nid_db = None
+    if nid_db_path:
+        try:
+            nid_db = NidDatabase()
+            count = nid_db.load(nid_db_path)
+            log_cb(f"  NID database loaded: {count} entries from {nid_db_path}")
+        except Exception as exc:
+            log_cb(f"  WARN: could not load NID database {nid_db_path}: {exc}")
+            nid_db = None
 
     unresolved = find_unresolved_imports(export_dir, libs_dir)
     if not unresolved:
@@ -542,7 +576,7 @@ def create_missing_prx_stubs(export_dir, log_cb=print):
 
         log_cb(f"  Creating NotImplemented stub: {stub_name} ({len(missing_names)} export(s))")
         try:
-            build_notimplemented_stub_dll(dll_name, missing_names, stub_path)
+            build_notimplemented_stub_dll(dll_name, missing_names, stub_path, nid_db=nid_db)
             created += 1
         except Exception as exc:
             log_cb(f"  WARN: failed to create stub {stub_name}: {exc}")

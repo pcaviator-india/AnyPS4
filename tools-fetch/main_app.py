@@ -70,6 +70,7 @@ DEFAULTS = {
     "targets": ["windows"],
     "prx_source_dir": PRX_SOURCE_DIR,
     "patch_nids": True,
+    "nid_db_path": "",
     "unwrapped_elf_files": [],
     "unwrapped_prx_files": [],
 }
@@ -238,6 +239,7 @@ class App:
         self.copy_prx = tk.BooleanVar(value=self.settings["copy_prx"])
         self.patch_nids = tk.BooleanVar(value=self.settings.get("patch_nids", True))
         self.prx_source_dir = tk.StringVar(value=self.settings["prx_source_dir"])
+        self.nid_db_path = tk.StringVar(value=self.settings.get("nid_db_path", ""))
         self.auto_detect = tk.BooleanVar(value=True)
 
         self.pkg_list = []
@@ -324,6 +326,23 @@ class App:
             prx_row, text="Browse",
             command=self._browse_prx_source
         ).pack(side=tk.LEFT)
+
+        nid_db_row = ttk.Frame(tab_pkg)
+        nid_db_row.pack(fill=tk.X, pady=3)
+        ttk.Label(nid_db_row, text="NID database:").pack(side=tk.LEFT)
+        ttk.Entry(nid_db_row, textvariable=self.nid_db_path).pack(
+            side=tk.LEFT, padx=4, fill=tk.X, expand=True
+        )
+        ttk.Button(
+            nid_db_row, text="Browse",
+            command=self._browse_nid_db
+        ).pack(side=tk.LEFT)
+        ttk.Label(
+            nid_db_row,
+            text="(CSV: NID name per line, or JSON)",
+            foreground="gray",
+            font=("TkDefaultFont", 8),
+        ).pack(side=tk.LEFT, padx=4)
 
         rel_row = ttk.Frame(tab_pkg)
         rel_row.pack(fill=tk.X, pady=3)
@@ -637,6 +656,16 @@ class App:
         if folder:
             self.nid_patcher_path.set(folder)
 
+    def _browse_nid_db(self):
+        folder = filedialog.askopenfilename(
+            initialdir=os.path.dirname(self.nid_db_path.get()) or os.path.expanduser("~"),
+            title="Select NID database CSV or JSON",
+            filetypes=[("CSV database", "*.csv"), ("JSON database", "*.json"), ("All files", "*.*")],
+        )
+        if folder:
+            self.nid_db_path.set(folder)
+
+
     def _refresh_pkg_list(self):
         if not hasattr(self, "pkg_tree"):
             return
@@ -897,7 +926,8 @@ class App:
             return
 
         log_cb("[4.6/5] Creating NotImplemented stubs for unresolved imports...")
-        create_missing_prx_stubs(export_dir, log_cb=self._log)
+        nid_db_path = self.nid_db_path.get().strip() or None
+        create_missing_prx_stubs(export_dir, log_cb=self._log, nid_db_path=nid_db_path)
 
         # Remove intermediate export-list .txt files from libs/
         for txt_file in Path(libs_dir).glob("*_exports.txt"):
@@ -1124,6 +1154,7 @@ class App:
             "copy_prx": self.copy_prx.get(),
             "patch_nids": self.patch_nids.get(),
             "prx_source_dir": self.prx_source_dir.get(),
+            "nid_db_path": self.nid_db_path.get(),
             "unwrapped_elf_files": self.unwrapped_elf_files,
             "unwrapped_prx_files": self.unwrapped_prx_files,
         })
