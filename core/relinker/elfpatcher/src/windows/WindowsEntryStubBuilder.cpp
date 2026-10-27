@@ -5,6 +5,7 @@
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <map>
 #include <set>
 #include <optional>
@@ -67,7 +68,7 @@ std::u16string toUtf16(const std::string& text) {
 
 }
 
-WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules, const std::set<std::string>& unmatchedImportModules, const bool traceImports) const {
+WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules, const std::set<std::string>& unmatchedImportModules, const bool traceImports, const std::uint64_t ps4EntryVa, const std::uint64_t delta, const std::vector<std::uint8_t>& entryBytes) const {
     if (!imports.empty() && libraries.empty())
         throw Domain::RelinkerException("ELF imports have no DT_NEEDED libraries");
     const auto path = normalizeRunPath(runPath);
@@ -832,6 +833,49 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     code.Emit({0x48, 0x8D, 0x0D});                  // lea rcx, [rip + disp32]
     code.PatchBranch(code.Branch({}), aboutToTransfer);
     code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+
+    // ---- Log entry point address, original PS4 VA, delta, and first 16 bytes ----
+    {
+        constexpr std::uint64_t stubImageBase = 0x180000000ULL;
+        const auto windowsEntryVa = stubImageBase + entryRva;
+
+        auto formatHex64 = [](std::uint64_t value) {
+            std::string result = "0x";
+            constexpr const char* hexDigits = "0123456789abcdef";
+            for (int i = 60; i >= 0; i -= 4)
+                result.push_back(hexDigits[(value >> i) & 0xf]);
+            return result;
+        };
+
+        // Entry point Windows VA
+        {
+            std::string msg = "Entry point addr: " + formatHex64(windowsEntryVa) + "\n";
+            const auto msgRva = addString(msg);
+            writeString(msgRva);
+        }
+
+        // Original PS4 entry VA and delta
+        {
+            std::string msg = "PS4 entry VA: " + formatHex64(ps4EntryVa) + ", delta: " + formatHex64(delta) + "\n";
+            const auto msgRva = addString(msg);
+            writeString(msgRva);
+        }
+
+        // First 16 bytes at entry point
+        if (entryBytes.size() >= 16) {
+            std::string msg = "Entry bytes: ";
+            for (std::size_t i = 0; i < 16; ++i) {
+                char byteBuf[4];
+                std::snprintf(byteBuf, sizeof(byteBuf), "%02x", entryBytes[i]);
+                msg += byteBuf;
+                if (i < 15)
+                    msg += ' ';
+            }
+            msg += "\n";
+            const auto msgRva = addString(msg);
+            writeString(msgRva);
+        }
+    }
 
     // ---- Transfer control to ELF entry point ----
     code.Rip({0xe8}, entryRva);

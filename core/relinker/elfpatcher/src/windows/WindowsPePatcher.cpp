@@ -120,7 +120,14 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
     if (dependencyDiagnostics)
         for (const auto& import : relocations.Imports) diagnostics += import.Name + '\n';
     report(8500);
-    auto entry = WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports, runPath, lazyBinding, dependencyDiagnostics, dynamicSection.GuestModules, dynamicSection.UnmatchedImportModules, traceImports);
+    const auto imageEntryRva = image.GetEntryRva();
+    constexpr std::uint64_t LoadRva = 0x10000;
+    const auto firstAddr = image.GetFirstAddress();
+    const auto ps4EntryVa = imageEntryRva - LoadRva + firstAddr;
+    const auto delta = image.GetImageBase() + LoadRva - firstAddr;
+    const auto entryBytes = image.ReadBytes(ps4EntryVa, 16);
+    auto entry = WindowsEntryStubBuilder().Build(nextRva, imageEntryRva, nativeImports, libraries, relocations.Imports, runPath, lazyBinding, dependencyDiagnostics, dynamicSection.GuestModules, dynamicSection.UnmatchedImportModules, traceImports,
+ps4EntryVa, delta, entryBytes);
     report(9000);
     directories[3] = entry.ExceptionDirectory;
     const auto entryRva = entry.Code.Rva;

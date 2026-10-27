@@ -86,6 +86,16 @@ std::uint64_t WindowsLoadImage::GetImageBase() const {
     return imageBase;
 }
 
+std::uint64_t WindowsLoadImage::GetFirstAddress() const {
+    return firstAddress;
+}
+
+std::vector<std::uint8_t> WindowsLoadImage::ReadBytes(std::uint64_t address, std::uint64_t size) const {
+    const auto rva = GetRva(address, size) - LoadRva;
+    return {data.begin() + static_cast<std::ptrdiff_t>(rva),
+            data.begin() + static_cast<std::ptrdiff_t>(rva) + static_cast<std::ptrdiff_t>(size)};
+}
+
 void WindowsLoadImage::WritePointer(const std::uint64_t address, const std::uint64_t value) {
     Io::WriteU64(data, GetRva(address, 8) - LoadRva, value);
 }

@@ -14,6 +14,8 @@ public:
     std::uint32_t GetEntryRva() const;
     std::uint64_t GetRelocatedAddress(std::uint64_t address) const;
     std::uint64_t GetImageBase() const;
+    std::uint64_t GetFirstAddress() const;
+    std::vector<std::uint8_t> ReadBytes(std::uint64_t address, std::uint64_t size) const;
     void WritePointer(std::uint64_t address, std::uint64_t value);
     void RequireWritable(std::uint64_t address, std::uint64_t size) const;
     std::vector<PeSection> BuildSections() const;

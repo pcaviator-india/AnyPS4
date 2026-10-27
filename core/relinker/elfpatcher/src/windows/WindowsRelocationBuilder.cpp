@@ -61,7 +61,23 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
                 image.WritePointer(target, type == 17 ? addend : addend - Io::AlignUp64(tls->MemorySize, alignment));
                 continue;
             }
-            if (symbol == 0 || symbol >= dynamicSection.DynSymData.size() / 24)
+            if (symbol == 0) {
+                // Absolute relocation (R_X86_64_64 or R_X86_64_GLOB_DAT with symbol index 0):
+                // the addend is the absolute ELF virtual address. Relocate it if it falls
+                // inside any PT_LOAD segment; otherwise leave it as-is (may be an external
+                // absolute address that should not be patched).
+                if (type == 1 || type == 6) {
+                    try {
+                        image.WritePointer(target, image.GetRelocatedAddress(addend));
+                        result.BaseRelocations.push_back(rva);
+                        continue;
+                    } catch (const Domain::RelinkerException&) {
+                        // Address not in any PT_LOAD segment — leave as-is
+                    }
+                }
+                throw Domain::RelinkerException("Invalid import symbol index", target);
+            }
+            if (symbol >= dynamicSection.DynSymData.size() / 24)
                 throw Domain::RelinkerException("Invalid import symbol index", target);
             const auto symbolOffset = static_cast<std::size_t>(symbol) * 24;
             if (Io::ReadU16(dynamicSection.DynSymData, symbolOffset + 6) != 0) {
