@@ -327,4 +327,43 @@ int APS5_VABI scePadUnknown_zBsgF0q8DIM() {
     return 0;
 }
 
+// PS4 NID-alias tables: map PS4-imported NIDs to existing libScePad
+// implementations. NIDs computed from PS4 symbol names (same SHA1+suffix
+// scheme as PS5); PS4 games importing by these NIDs resolve here.
+APS5_EXPORT("xk0AcarP3V4", scePadOpen_nid_postfix);
+APS5_EXPORT("6ncge5+l5Qs", scePadClose_nid_postfix);
+APS5_EXPORT("q1cHNfGycLI", scePadRead_nid_postfix);
+APS5_EXPORT("hv1luiJrqQM", scePadInit_nid_postfix);
+APS5_EXPORT("u1GRHp+oWoY", scePadGetHandle);
+APS5_EXPORT("1Odcw19nADw", scePadGetInfo_nid_postfix);
+APS5_EXPORT("gjP9-KQzoUk", scePadGetControllerInformation);
+APS5_EXPORT("yFVnOdGxvZY", scePadSetVibration);
+APS5_EXPORT("W2G-yoyMF5U", scePadSetVibrationMode);
+APS5_EXPORT("2JgFB2n9oUM", scePadSetTriggerEffect);
+APS5_EXPORT("vDLMoJLde8I", scePadSetTiltCorrectionState);
+APS5_EXPORT("fCWdlnmB1Ks", scePadIsRemoteController);
+
+// PS4 imports with no libScePad implementation yet: provide stubs so the
+// import resolves rather than failing at load time.
+APS5_EXPORT("fVzAbL2DSDU", padGetState_stub);
+int APS5_VABI padGetState_stub(int handle, PadData* data) {
+    (void)handle;
+    (void)data;
+    NotImplemented_nid_no_patch("padGetState_stub");
+    return 0;
+}
+
+APS5_EXPORT("JhVp+aAZA1M", padSetMotionEnabled_stub);
+int APS5_VABI padSetMotionEnabled_stub(int handle, bool enable) {
+    (void)handle;
+    (void)enable;
+    NotImplemented_nid_no_patch("padSetMotionEnabled_stub");
+    return 0;
+}
+
+APS5_EXPORT("8GeEBxNBuzw", padFinish_stub);
+int APS5_VABI padFinish_stub(void) {
+    NotImplemented_nid_no_patch("padFinish_stub");
+    return 0;
+}
 }

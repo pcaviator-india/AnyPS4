@@ -111,4 +111,27 @@ int APS5_VABI sceKernelUnknown19(void) {
     NotImplemented_nid_no_patch("uDGXwUKqi8s");
     return 0;
 }
+
+// PS4 NID-alias tables: map PS4-imported NIDs to existing libkernel
+// implementations. NIDs computed from PS4 symbol names (same SHA1+suffix
+// scheme as PS5); PS4 games importing by these NIDs resolve here.
+APS5_EXPORT("wzvqT4UqKX8", sceKernelLoadStartModule);
+APS5_EXPORT("bMMArNdQ-N8", sceKernelStopUnloadModule);
+APS5_EXPORT("oNvROPSEQAM", sceKernelLoadStartModule);
+APS5_EXPORT("kOCZr2bEYFY", sceKernelStopUnloadModule);
+
+// sceKernelExitThread is imported by PS4 titles but not yet implemented;
+// provide a stub so the import resolves rather than failing at load time.
+APS5_EXPORT("Nk4Ar0dg-iw", sceKernelExitThread_stub);
+int APS5_VABI sceKernelExitThread_stub(void) {
+    NotImplemented_nid_no_patch("Nk4Ar0dg-iw");
+    return 0;
+}
+
+// sceKernelIsNeoMode reports whether the system is running in PS4 Pro / Neo mode.
+// Returning 0 indicates base PS4 mode.
+APS5_EXPORT("WslcK1FQcGI", sceKernelIsNeoMode_stub);
+int APS5_VABI sceKernelIsNeoMode_stub(void) {
+    return 0;
+}
 }

@@ -20,6 +20,7 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
+#include "prx/libSceVideoOut/include/VideoOutWindow.hpp"
 #if APS5_ENABLE_TIMING_LOG
 #include "prx/libSceVideoOut/include/FrameTimingLog.hpp"
 #endif
@@ -266,6 +267,10 @@ void FlipRequest::Fail(std::exception_ptr error) noexcept {
 VideoOutDriver& VideoOutDriver::Get() {
     static VideoOutDriver instance;
     return instance;
+}
+
+extern "C" SDL_Window* GetVideoOutSDLWindow() {
+    return VideoOutDriver::Get().GetSDLWindow();
 }
 
 VideoOutDriver::VideoOutDriver() {

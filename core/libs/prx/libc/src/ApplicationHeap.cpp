@@ -151,7 +151,17 @@ void ApplicationHeapInitialize_nid_no_patch(const void* processParameters) {
             const auto* libcParameters = read<const void*>(processParameters, 0x38);
             if (read<std::uint64_t>(libcParameters, 0) < 0x38) throw std::runtime_error("application heap: invalid libc parameters");
             const auto* replacement = read<const void*>(libcParameters, 0x30);
-            if (read<std::uint64_t>(replacement, 0) != 0x78 || read<std::uint64_t>(replacement, 8) != 2) throw std::runtime_error("application heap: unsupported allocator replacement table");
+
+            // PS4 titles (especially pre-2017) use a different replacement-table layout.
+            // Fall back to the default guest heap instead of aborting.
+            if (replacement == nullptr ||
+                read<std::uint64_t>(replacement, 0) != 0x78 ||
+                read<std::uint64_t>(replacement, 8) != 2)
+            {
+                ApplicationHeapRegister_nid_no_patch(defaultApi().data());
+                return;   // skip the rest of the PS5-style initialization
+            }
+
             std::array<void*, 10> api;
             std::memcpy(api.data(), static_cast<const std::byte*>(replacement) + 0x20, sizeof(api));
             ApplicationHeapRegister_nid_no_patch(api.data());

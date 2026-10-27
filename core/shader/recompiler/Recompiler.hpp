@@ -28,6 +28,11 @@ enum class ShaderStage {
     Mesh
 };
 
+enum class ShaderProfile {
+    RDNA,   // PS5 RDNA ISA (default, existing path)
+    GCN     // PS4 GCN ISA (experimental, Phase 3)
+};
+
 struct MemoryRegion {
     std::uint64_t guestAddress;
     std::span<const std::byte> bytes;
@@ -266,6 +271,7 @@ struct SpirvTarget {
     std::uint32_t registrationWordLimit = 200000u;
     bool vertexSubgroups = true;
     bool float16DenormPreserve = false;
+    ShaderProfile profile = ShaderProfile::RDNA;
 };
 
 struct BindingLayout {

@@ -1,5 +1,6 @@
 #include <Cli.hpp>
 #include <io/NativePath.hpp>
+#include <cstdlib>
 #include <charconv>
 #include <filesystem>
 #include <iostream>
@@ -11,7 +12,7 @@
 namespace Cli {
 
 const char* Usage() {
-    return "Usage: relinker [--help] [--windows | --macos] [--windows-diagnostics] [--windows-gui] [--trace-imports] [--windows-fixed-base <address>] [--linux-fixed-base <address>] [--skip-syscall-check | --trap-sdk-syscall-stubs] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--module-dir <dir>]... [--executable <path>]... [--to-intel] [--to-rosetta] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input.elf> <output.elf>\n"
+    return "Usage: relinker [--help] [--windows | --macos] [--windows-diagnostics] [--windows-gui] [--trace-imports] [--windows-fixed-base <address>] [--linux-fixed-base <address>] [--skip-syscall-check | --trap-sdk-syscall-stubs] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--module-dir <dir>]... [--executable <path>]... [--to-intel] [--to-rosetta] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] [--ps4] [--ps4-experimental-graphics] <input.elf> <output.elf>\n"
            "Example: relinker input.elf output.elf";
 }
 
@@ -101,6 +102,19 @@ Args ParseArgs(int argc, char* argv[]) {
             args.lazyBinding = true;
         } else if (arg == "--autorun") {
             args.autorun = true;
+        } else if (arg == "--ps4") {
+            args.ps4Mode = true;
+            g_isPs4Mode = true;
+        } else if (arg == "--ps4-experimental-graphics") {
+            args.ps4ExperimentalGraphics = true;
+            g_isPs4ExperimentalGraphics = true;
+            args.ps4Mode = true;
+            g_isPs4Mode = true;
+#if defined(_WIN32)
+            _putenv_s("APS5_PS4_EXPERIMENTAL_GRAPHICS", "1");
+#else
+            setenv("APS5_PS4_EXPERIMENTAL_GRAPHICS", "1", 1);
+#endif
         } else if (arg == "--windows-diagnostics") {
             args.windowsDiagnostics = true;
         } else if (arg == "--windows-gui") {

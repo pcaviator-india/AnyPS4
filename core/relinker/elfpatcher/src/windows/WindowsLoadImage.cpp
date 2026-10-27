@@ -1,4 +1,5 @@
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
+#include <Cli.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <limits>
@@ -9,7 +10,7 @@ WindowsLoadImage::WindowsLoadImage(const std::vector<std::uint8_t>& source, cons
     if (source.size() < 64 || Io::ReadU32(source, 0) != 0x464c457f || source[4] != 2 || source[5] != 1 || source[6] != 1 || Io::ReadU16(source, 18) != 62)
         throw Domain::RelinkerException("Windows output requires a little-endian ELF64 x86-64 image");
     const auto type = Io::ReadU16(source, 16);
-    if (type != 3 && type != 0xfe10 && type != 0xfe18)
+    if (type != 3 && type != 0xfe10 && type != 0xfe18 && !(Cli::g_isPs4Mode && type == 0xfe00))
         throw Domain::RelinkerException("Windows output requires a position-independent ELF image");
     for (const auto& header : headers) {
         if (header.Type != 1)

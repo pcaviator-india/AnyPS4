@@ -39,6 +39,10 @@ struct Module {
     void* native = nullptr;
     bool owned = true;
     bool global = false;
+    // ELF type of the loaded image (ET_SCE_DYNAMIC = 0xFE18 for PS4 shared
+    // libraries; 0 = unknown/host image). Tracked so ET_SCE_DYNAMIC module
+    // handles can be distinguished and handled appropriately.
+    std::uint32_t elfType = 0;
     ~Module() {
         if (owned && native) {
 #ifdef _WIN32

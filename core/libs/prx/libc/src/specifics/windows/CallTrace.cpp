@@ -157,6 +157,7 @@ std::size_t CopyCallCounts_nid_no_patch(CallTraceCount* entries, std::size_t cap
 
 }
 
+#if !defined(_MSC_VER)
 asm(".text\n"
     APS5_ASM_FUNCTION("CallTraceEnter_nid_no_patch")
     "    push %rdi\n"
@@ -199,4 +200,5 @@ asm(".text\n"
     "    pop %rsi\n"
     "    pop %rdi\n"
     "    jmp *(%r11)\n");
+#endif
 #endif

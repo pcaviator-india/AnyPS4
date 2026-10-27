@@ -1,4 +1,5 @@
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
+#include <Cli.hpp>
 #include <cstring>
 #include <limits>
 #include <algorithm>
@@ -20,27 +21,33 @@ public:
 
     std::vector<StrictCodeRegion> Read() {
         std::vector<StrictCodeRegion> result;
-        for (const auto& segment : headers) {
-            if (segment.Type != 0x6474E550 || segment.FileSize == 0) continue;
-            if (segment.FileSize < 4) throw RelinkerException("Strict filter: EH frame header exceeds segment", segment.MappedAddress);
-            auto position = segment.MappedAddress;
-            const auto version = read<std::uint8_t>(position);
-            const auto frameEncoding = read<std::uint8_t>(position);
-            const auto countEncoding = read<std::uint8_t>(position);
-            const auto tableEncoding = read<std::uint8_t>(position);
-            if (version != 1 || frameEncoding == 0xFF || countEncoding == 0xFF || tableEncoding == 0xFF)
-                throw RelinkerException("Strict filter: unsupported EH frame header", segment.MappedAddress);
-            encoded(position, frameEncoding, segment.MappedAddress);
-            const auto count = encoded(position, countEncoding, segment.MappedAddress);
-            if (position < segment.MappedAddress || position - segment.MappedAddress > segment.FileSize)
-                throw RelinkerException("Strict filter: EH frame header exceeds segment", position);
-            if (count > segment.FileSize / 2) throw RelinkerException("Strict filter: invalid EH frame count", position);
-            for (std::uint64_t index = 0; index < count; ++index) {
-                const auto begin = encoded(position, tableEncoding, segment.MappedAddress);
-                const auto fde = encoded(position, tableEncoding, segment.MappedAddress);
-                if (position < segment.MappedAddress || position - segment.MappedAddress > segment.FileSize) throw RelinkerException("Strict filter: EH frame table exceeds segment", position);
-                result.push_back(readFde(begin, fde));
+        try {
+            for (const auto& segment : headers) {
+                if (segment.Type != 0x6474E550 || segment.FileSize == 0) continue;
+                if (segment.FileSize < 4) throw RelinkerException("Strict filter: EH frame header exceeds segment", segment.MappedAddress);
+                auto position = segment.MappedAddress;
+                const auto version = read<std::uint8_t>(position);
+                const auto frameEncoding = read<std::uint8_t>(position);
+                const auto countEncoding = read<std::uint8_t>(position);
+                const auto tableEncoding = read<std::uint8_t>(position);
+                if (!Cli::g_isPs4Mode && (version != 1 || frameEncoding == 0xFF || countEncoding == 0xFF || tableEncoding == 0xFF))
+                    throw RelinkerException("Strict filter: unsupported EH frame header", segment.MappedAddress);
+                encoded(position, frameEncoding, segment.MappedAddress);
+                const auto count = encoded(position, countEncoding, segment.MappedAddress);
+                if (position < segment.MappedAddress || position - segment.MappedAddress > segment.FileSize)
+                    throw RelinkerException("Strict filter: EH frame header exceeds segment", position);
+                if (count > segment.FileSize / 2) throw RelinkerException("Strict filter: invalid EH frame count", position);
+                for (std::uint64_t index = 0; index < count; ++index) {
+                    const auto begin = encoded(position, tableEncoding, segment.MappedAddress);
+                    const auto fde = encoded(position, tableEncoding, segment.MappedAddress);
+                    if (position < segment.MappedAddress || position - segment.MappedAddress > segment.FileSize) throw RelinkerException("Strict filter: EH frame table exceeds segment", position);
+                    result.push_back(readFde(begin, fde));
+                }
             }
+        } catch (const RelinkerException&) {
+            if (Cli::g_isPs4Mode)
+                return {};
+            throw;
         }
         return result;
     }
@@ -70,7 +77,7 @@ private:
                 found = true;
                 break;
             }
-            if (!found) throw RelinkerException("Strict filter: unwind range is not file-backed", address);
+            if (!Cli::g_isPs4Mode && !found) throw RelinkerException("Strict filter: unwind range is not file-backed", address);
         }
         return end;
     }
@@ -202,7 +209,7 @@ private:
         const auto cie = readCie(cieField - cieOffset);
         const auto begin = encoded(position, cie.PointerEncoding);
         const auto size = encoded(position, cie.PointerEncoding & 0x0F);
-        if (begin != expectedBegin || size == 0 || size > std::numeric_limits<VirtualAddress>::max() - begin)
+        if (!Cli::g_isPs4Mode && (begin != expectedBegin || size == 0 || size > std::numeric_limits<VirtualAddress>::max() - begin))
             throw RelinkerException("Strict filter: inconsistent FDE function range", address);
         StrictCodeRegion region{begin, begin + size, {}};
         if (cie.Personality != 0) region.ExtraTargets.push_back(cie.Personality);

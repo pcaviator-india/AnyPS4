@@ -1,6 +1,7 @@
 #include <relinker/parsing/ElfReader.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <relinker/domain/Types.hpp>
+#include <Cli.hpp>
 #include <algorithm>
 #include <cstring>
 #include <utility>
@@ -98,7 +99,23 @@ ElfHeader ElfReader::ReadHeader() const {
     if (_readU16At(0x34) != 64)
         throw RelinkerException("Invalid ELF header size: expected 64 bytes", 0x34);
 
+    const std::uint16_t eType = _readU16At(0x10);
+    const std::uint8_t eOsAbi = _readU8At(0x07);
+    const bool ps4Type = eType == ET_SCE_EXEC || eType == ET_SCE_EXEC_ASLR || eType == ET_SCE_DYNAMIC;
+    if (Cli::g_isPs4Mode) {
+        if (!(eType == ET_EXEC || eType == ET_DYN || ps4Type))
+            throw RelinkerException("Unsupported ELF type for PS4: expected ET_EXEC/ET_DYN/ET_SCE_*", 0x10);
+        if (!(eOsAbi == ELFOSABI_SYSV || eOsAbi == ELFOSABI_FREEBSD))
+            throw RelinkerException("Unsupported ELF OSABI for PS4: expected SYSV or FreeBSD", 0x07);
+    } else if (eOsAbi == ELFOSABI_FREEBSD && eType != ET_DYN) {
+        // FreeBSD OSABI with a console-style e_type (ET_EXEC or ET_SCE_*) marks a
+        // PS4/PS5 console image and requires --ps4; ET_DYN stays accepted so plain
+        // FreeBSD PIE inputs keep converting unchanged.
+        throw RelinkerException("Unsupported ELF OSABI for PS4: expected SYSV", 0x07);
+    }
+
     ElfHeader header{};
+    header.Console = ps4Type ? Domain::TargetConsole::PS4 : Domain::TargetConsole::PS5;
     header.Machine = _readU16At(0x12);
     header.Type = _readU16At(0x10);
     header.OsAbi = _readU8At(0x07);
@@ -261,6 +278,8 @@ std::vector<DynamicTag> ElfReader::ReadDynamicTags(const ProgramHeader& dynamicH
         offset += 16;
     }
 
+    if (Cli::g_isPs4Mode)
+        return tags;
     throw RelinkerException("Unterminated dynamic segment", dynamicHeader.Offset);
 }
 

@@ -6,6 +6,10 @@
 #include <map>
 #include <string>
 
+namespace Cli {
+extern bool g_isPs4Mode;
+}
+
 namespace Elfpatcher::Windows {
 
 PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Domain::SysVDynamicSection& dynamicSection,
@@ -38,6 +42,11 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
                 continue;
             }
             if (type == 16 || type == 17 || type == 18) {
+                if (Cli::g_isPs4Mode) {
+                    image.WritePointer(target, addend);
+                    result.BaseRelocations.push_back(image.GetRva(target, 8));
+                    continue;
+                }
                 if (symbol != 0)
                     throw Domain::RelinkerException("Imported TLS relocation " + std::to_string(type) + " is not supported for this target", target);
                 if (type == 16)

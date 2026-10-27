@@ -21,7 +21,8 @@ public:
         const std::string& runPath,
         bool lazyBinding,
         bool dependencyDiagnostics,
-        const std::vector<Codegen::TrampolineSite>& trampolines
+        const std::vector<Codegen::TrampolineSite>& trampolines,
+        bool ps4Mode = false
     ) = 0;
 };
 

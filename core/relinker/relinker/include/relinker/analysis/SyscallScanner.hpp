@@ -7,7 +7,7 @@
 
 namespace Relinker {
 
-std::unique_ptr<ISyscallScanner> MakeSyscallScanner(Domain::IProgress& progress, bool trapSdkStubs = false);
+std::unique_ptr<ISyscallScanner> MakeSyscallScanner(Domain::IProgress& progress, bool trapSdkStubs = false, bool stopAtTrailingData = false);
 std::unique_ptr<ISyscallScanner> MakeNullSyscallScanner();
 
 }

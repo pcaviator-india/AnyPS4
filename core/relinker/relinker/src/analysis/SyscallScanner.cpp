@@ -1,6 +1,7 @@
 #include <relinker/analysis/SyscallScanner.hpp>
 #include <codegen/IInstructionScanner.hpp>
 #include <codegen/x86/DecodedInstruction.hpp>
+#include <Cli.hpp>
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -8,6 +9,7 @@
 
 #include <memory>
 #include <optional>
+#include <iostream>
 #include <sstream>
 
 namespace Relinker {
@@ -27,7 +29,66 @@ static constexpr std::array<std::uint8_t, 23> SDK_GENERIC_SYSCALL_STUB{
     0x4D, 0x89, 0xC2, 0x4D, 0x89, 0xC8, 0x4C, 0x8B, 0x4C, 0x24, 0x08,
 };
 
-static bool IsSdkSyscallStub(const std::vector<std::uint8_t>& code, const std::size_t syscallOffset) {
+static constexpr std::array<std::uint8_t, 18> PS4_SDK_SYSCALL_STUB{
+    0x48, 0x89, 0xF8, 0x48, 0x89, 0xF7, 0x48, 0x89, 0xD6, 0x48, 0x89, 0xCA,
+    0x4D, 0x89, 0xC2, 0x4D, 0x89, 0xC8,
+};
+
+static constexpr std::array<std::uint8_t, 12> PS4_SDK_SYSCALL_STUB_SHORT{
+    0x48, 0x89, 0xF8, 0x48, 0x89, 0xF7, 0x48, 0x89, 0xD6, 0x48, 0x89, 0xCA,
+};
+
+static constexpr std::array<std::uint32_t, 32> PS4_SYSCALL_NUMBERS{
+    0,  // SYS_none
+    1,  // SYS_exit
+    2,  // SYS_fork
+    3,  // SYS_read
+    4,  // SYS_write
+    5,  // SYS_open
+    6,  // SYS_close
+    7,  // SYS_wait4
+    8,  // SYS_link
+    9,  // SYS_unlink
+    10, // SYS_chdir
+    11, // SYS_fchdir
+    12, // SYS_mknod
+    13, // SYS_chmod
+    14, // SYS_chown
+    15, // SYS_obreak
+    16, // SYS_getfsstat
+    17, // SYS_getpid
+    18, // SYS_mount
+    21, // SYS_unmount
+    22, // SYS_setuid
+    23, // SYS_getuid
+    26, // SYS_geteuid
+    27, // SYS_ptrace
+    42, // SYS_kill
+    46, // SYS_getppid
+    47, // SYS_dup
+    51, // SYS_sigaction
+    55, // SYS_ioctl
+    56, // SYS_reboot
+    59, // SYS_execve
+    60, // SYS_msync
+};
+
+static bool IsPs4SdkSyscallStub(const std::vector<std::uint8_t>& code, const std::size_t syscallOffset) {
+    if (syscallOffset > code.size() || syscallOffset < PS4_SDK_SYSCALL_STUB_SHORT.size() || code.size() - syscallOffset < 3u)
+        return false;
+    const auto begin = code.begin() + static_cast<std::ptrdiff_t>(syscallOffset - PS4_SDK_SYSCALL_STUB_SHORT.size());
+    if (std::equal(PS4_SDK_SYSCALL_STUB_SHORT.begin(), PS4_SDK_SYSCALL_STUB_SHORT.end(), begin)
+        && code[syscallOffset] == 0x0F && code[syscallOffset + 1] == 0x05 && code[syscallOffset + 2] == 0xC3)
+        return true;
+    if (syscallOffset < PS4_SDK_SYSCALL_STUB.size())
+        return false;
+    const auto begin2 = code.begin() + static_cast<std::ptrdiff_t>(syscallOffset - PS4_SDK_SYSCALL_STUB.size());
+    return std::equal(PS4_SDK_SYSCALL_STUB.begin(), PS4_SDK_SYSCALL_STUB.end(), begin2)
+        && code[syscallOffset] == 0x0F && code[syscallOffset + 1] == 0x05 && code[syscallOffset + 2] == 0xC3;
+}
+
+static bool IsSdkSyscallStub(const std::vector<std::uint8_t>& code, const std::size_t syscallOffset, const bool ps4Mode) {
+    if (ps4Mode && IsPs4SdkSyscallStub(code, syscallOffset)) return true;
     constexpr std::array<std::uint8_t, 3> numberLoad{0x48, 0xC7, 0xC0};
     constexpr std::array<std::uint8_t, 3> argumentShuffle{0x49, 0x89, 0xCA};
     if (syscallOffset <= code.size() && syscallOffset >= SDK_GENERIC_SYSCALL_STUB.size() && code.size() - syscallOffset >= 3u) {
@@ -171,13 +232,14 @@ static std::optional<std::uint32_t> ConstantSyscallNumber(const std::vector<std:
 
 class SyscallScanner : public ISyscallScanner {
 public:
-    SyscallScanner(Domain::IProgress& progress, const bool trapSdkStubs) : progress(progress), trapSdkStubs(trapSdkStubs) {}
+    SyscallScanner(Domain::IProgress& progress, const bool trapSdkStubs, const bool stopAtTrailingData) : progress(progress), trapSdkStubs(trapSdkStubs), stopAtTrailingData(stopAtTrailingData) {}
 
     std::vector<std::size_t> ScanCodeSectionForSyscalls(const std::vector<std::uint8_t>& codeSection, FileByteOffset codeSectionOffset, FileByteOffset codeSectionSize, std::string_view input) override;
 
 private:
     Domain::IProgress& progress;
     bool trapSdkStubs;
+    bool stopAtTrailingData;
 };
 
 std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::vector<std::uint8_t>& codeSection, const FileByteOffset codeSectionOffset, const FileByteOffset codeSectionSize, std::string_view input) {
@@ -185,7 +247,7 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
     const auto limit = static_cast<std::size_t>(codeSectionSize);
 
     const std::string source(input);
-    const auto scanner = Codegen::MakeInstructionScanner([&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Decode, source, completed, total}); });
+    const auto scanner = Codegen::MakeInstructionScanner([&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Decode, source, completed, total}); }, Codegen::InstructionScannerOptions{stopAtTrailingData});
     RecentInstructions recent;
     std::vector<std::size_t> trapped;
     scanner->VisitCodeSection(codeSection, codeSectionOffset, codeSectionSize, [&](const Codegen::InstructionMatch& match) {
@@ -201,11 +263,9 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
             return;
 
         if (trapSdkStubs && kind == ForbiddenInstruction::Invocation &&
-            (IsSdkSyscallStub(codeSection, opcode) || IsSdkMmanSyscallStub(codeSection, opcode, limit, recent, codeSectionOffset))) {
+            (IsSdkSyscallStub(codeSection, opcode, Cli::g_isPs4Mode) || IsSdkMmanSyscallStub(codeSection, opcode, limit, recent, codeSectionOffset))) {
             trapped.push_back(opcode);
-            std::ostringstream message;
-            message << "Trapping SDK syscall instruction at code offset 0x" << std::hex << match.Offset << '\n';
-            progress.Message(message.str());
+            std::cerr << "Trapping SDK syscall instruction at code offset 0x" << std::hex << match.Offset << '\n';
             return;
         }
 
@@ -222,8 +282,8 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
     return trapped;
 }
 
-std::unique_ptr<ISyscallScanner> MakeSyscallScanner(Domain::IProgress& progress, const bool trapSdkStubs) {
-    return std::make_unique<SyscallScanner>(progress, trapSdkStubs);
+std::unique_ptr<ISyscallScanner> MakeSyscallScanner(Domain::IProgress& progress, const bool trapSdkStubs, const bool stopAtTrailingData) {
+    return std::make_unique<SyscallScanner>(progress, trapSdkStubs, stopAtTrailingData);
 }
 
 class NullSyscallScanner : public ISyscallScanner {

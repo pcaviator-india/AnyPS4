@@ -1,11 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_ITANIUM_CXXABI_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_ITANIUM_CXXABI_HPP
 
-#include <cxxabi.h>
-
-#ifdef _LIBCPPABI_VERSION
-#include <typeinfo>
-
+#if defined(_MSC_VER)
 namespace __cxxabiv1 {
 class __class_type_info : public std::type_info {
 public:
@@ -50,6 +46,10 @@ public:
 extern "C" int __cxa_thread_atexit(void (*)(void*), void*, void*) noexcept;
 #endif
 }
+#endif
+
+#if !defined(_MSC_VER)
+#include <cxxabi.h>
 #endif
 
 #endif

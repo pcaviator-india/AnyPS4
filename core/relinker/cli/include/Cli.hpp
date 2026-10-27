@@ -21,6 +21,8 @@ struct Args {
     bool toMacos = false;
     bool lazyBinding = false;
     bool autorun = false;
+    bool ps4Mode = false;
+    bool ps4ExperimentalGraphics = false;
     bool windowsDiagnostics = false;
     bool windowsGui = false;
     std::optional<std::uint64_t> windowsFixedBase;
@@ -41,6 +43,9 @@ Args ParseArgs(int argc, char* argv[]);
 const char* Usage();
 
 int Autorun(const std::string& absPath, bool toWindows);
+
+inline bool g_isPs4Mode = false;
+inline bool g_isPs4ExperimentalGraphics = false;
 
 }
 

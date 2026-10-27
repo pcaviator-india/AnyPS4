@@ -14,6 +14,10 @@
 #include <string>
 #include <unordered_set>
 
+namespace Cli {
+extern bool g_isPs4Mode;
+}
+
 namespace Relinker {
 
 namespace {
@@ -205,7 +209,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             const auto addend = Io::ReadU64(bytes, offset + 16);
             if (type == 8) {
                 const auto zeroSectionSymbol = index != 0 && index < symbolCount && (bytes[symbols + index * 24 + 4] & 15) == 3 && Io::ReadU64(bytes, symbols + index * 24 + 8) == 0;
-                if ((index != 0 && !zeroSectionSymbol) || !pointers.Values.emplace(slot, addend).second) throw Domain::RelinkerException("Code analysis: invalid relative relocation", slot);
+                if (!Cli::g_isPs4Mode && (index != 0 && !zeroSectionSymbol) || !pointers.Values.emplace(slot, addend).second) throw Domain::RelinkerException("Code analysis: invalid relative relocation", slot);
                 addRoot(addend);
             } else if (type == 1 || type == 6 || type == 7) {
                 if (index == 0 || index >= symbolCount) throw Domain::RelinkerException("Code analysis: invalid relocation symbol", slot);
@@ -237,7 +241,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         }
     }
     for (const auto& function : UnusedNidFilter::ReadExceptionFunctions(bytes, headers, pointers.Values, importSlots)) {
-        if (function.End <= function.Begin) throw Domain::RelinkerException("Code analysis: invalid unwind function range", function.Begin);
+        if (!Cli::g_isPs4Mode && function.End <= function.Begin) throw Domain::RelinkerException("Code analysis: invalid unwind function range", function.Begin);
         addFunction(function.Begin, function.End - function.Begin, false);
         for (const auto target : function.ExtraTargets) addRoot(target);
     }
@@ -377,7 +381,12 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
                 if (!decodedInstructions.insert(address).second) continue;
                 instructions.insert(address);
                 const auto offset = address - header.MappedAddress;
-                const auto info = decoder.DecodeInstruction(text.data() + offset, text.size() - offset);
+                Codegen::DecodedInstructionInfo info;
+                try {
+                    info = decoder.DecodeInstruction(text.data() + offset, text.size() - offset);
+                } catch (const Codegen::CodegenException&) {
+                    info = {};
+                }
                 addAddressTakenRoot(address, text.data() + offset, info);
                 if (info.HasBranchTarget && !info.HasRipRelativeDisp) addRoot(static_cast<std::uint64_t>(static_cast<std::int64_t>(address + info.Length) + info.BranchDisp));
             }

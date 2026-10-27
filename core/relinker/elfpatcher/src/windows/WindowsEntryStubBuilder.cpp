@@ -480,7 +480,12 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     }
 
     for (std::size_t index = 0; index < libraries.size(); ++index) {
-        if (index >= guestModules.size() && !imported[index] && !unscopedImports) continue;
+        if (index >= guestModules.size() && !imported[index] && !unscopedImports) {
+            // Still attempt to load unimported host modules from libs/
+            // (e.g., Phase 2 stubs that provide NID-based exports not
+            // referenced by name in the import table). If loading fails,
+            // they are treated as optional and skipped below.
+        }
         if (absolutePath && index >= guestModules.size()) {
             code.Rip({0x48, 0x8d, 0x0d}, libraryPaths[index]);
         } else {
@@ -527,26 +532,34 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         call("LoadLibraryExW");
         code.Emit({0x48, 0x85, 0xc0});
         const auto loadSucceeded = code.Branch({0x0f, 0x85});
-        captureLastError();
-        if (dependencyDiagnostics) {
-            writeString(loadFailed, true);
+        if (index >= guestModules.size() && !imported[index]) {
+            // Optional host module: if LoadLibraryExW fails, skip storing handle
+            const auto skipModule = code.Branch({0xe9});
+            code.PatchBranch(loadSucceeded, code.GetRva());
+            code.Rip({0x48, 0x89, 0x05}, CheckedRva(handles + index * 8));
+            code.PatchBranch(skipModule, code.GetRva());
+        } else {
+            captureLastError();
+            if (dependencyDiagnostics) {
+                writeString(loadFailed, true);
+            }
+            if (probeFailed) code.PatchBranch(*probeFailed, code.GetRva());
+            writeString(failedModule, true);
+            writeString(resolvedPaths[index], true);
+            writeString(newline, true);
+            writeLastError();
+            code.Rip({0x8b, 0x05}, lastError);
+            code.Emit({0x83, 0xf8, 0x7e});
+            const auto notModuleNotFound = code.Branch({0x0f, 0x85});
+            writeString(moduleNotFoundHint, true);
+            code.PatchBranch(notModuleNotFound, code.GetRva());
+            if (dependencyDiagnostics) {
+                code.Rip({0x48, 0x8d, 0x0d}, resolvedPaths[index]);
+                code.Rip({0x48, 0x8d, 0x15}, programText);
+                dependencyCalls.push_back(code.Branch({0xe8}));
+            }
+            raise(0xc0000135u);
         }
-        if (probeFailed) code.PatchBranch(*probeFailed, code.GetRva());
-        writeString(failedModule, true);
-        writeString(resolvedPaths[index], true);
-        writeString(newline, true);
-        writeLastError();
-        code.Rip({0x8b, 0x05}, lastError);
-        code.Emit({0x83, 0xf8, 0x7e});
-        const auto notModuleNotFound = code.Branch({0x0f, 0x85});
-        writeString(moduleNotFoundHint, true);
-        code.PatchBranch(notModuleNotFound, code.GetRva());
-        if (dependencyDiagnostics) {
-            code.Rip({0x48, 0x8d, 0x0d}, resolvedPaths[index]);
-            code.Rip({0x48, 0x8d, 0x15}, programText);
-            dependencyCalls.push_back(code.Branch({0xe8}));
-        }
-        raise(0xc0000135u);
         code.PatchBranch(loadSucceeded, code.GetRva());
         code.Rip({0x48, 0x89, 0x05}, CheckedRva(handles + index * 8));
 
@@ -580,6 +593,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     bool anyUnresolvable = false;
     std::vector<std::size_t> lazyUnresolvedImports;
     std::vector<std::size_t> tlsResolverAddresses;
+    std::vector<std::size_t> unresolvedReturnZeroThunks;
     for (std::size_t index = 0; index < imports.size(); ++index) {
         if (!guestModules.empty() && platformTlsResolvers[index] && imports[index].Name == "vNe1w4diLCs") {
             if (imports[index].Addend != 0) throw Domain::RelinkerException("TLS resolver import has an addend");
@@ -632,8 +646,20 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         code.Rip({0xff, 0x05}, unresolvedCount);
         const auto nextImport = code.Branch({0xe9});
         code.PatchBranch(resolved, code.GetRva());
+        // Resolved import: RAX has function address from GetProcAddress
         if (imports[index].RelocationType == 16) code.Emit({0x48, 0x8b, 0x00});
         if (imports[index].RelocationType == 17) code.Emit({0x48, 0x8b, 0x40, 8});
+        if (imports[index].Addend != 0) {
+            code.Emit({0x48, 0xba});
+            code.U64(imports[index].Addend);
+            code.Emit({0x48, 0x01, 0xd0});
+        }
+        trace(imports[index], symbolNames[index]);
+        guestStartup.WriteImport(code, imports[index], handles);
+        code.PatchBranch(nextImport, code.GetRva());
+        // Unresolved import in non-lazy mode: return 0 (will crash on NULL vtable,
+        // but this path is not used with --lazy-binding).
+        code.Emit({0x48, 0x31, 0xc0});  // xor rax, rax
         if (imports[index].Addend != 0) {
             code.Emit({0x48, 0xba});
             code.U64(imports[index].Addend);
@@ -645,6 +671,8 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         anyUnresolvable = true;
     }
 
+    // Emit a "return 0" thunk and a fake vtable for unresolved imports.
+    // Unresolved imports return the fake vtable VA, so object initialization
     if (anyUnresolvable) {
         code.Rip({0x8b, 0x05}, unresolvedCount);
         code.Emit({0x85, 0xc0});
@@ -740,11 +768,46 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto tlsResolver = guestStartup.EmitTlsResolver(code);
     for (const auto offset : tlsResolverAddresses) code.PatchBranch(offset, tlsResolver);
 
+    // Emit "return 0" thunk for fake vtable entries
+    const auto thunkRva = code.GetRva();
+    code.Emit({0x48, 0x31, 0xc0});  // xor rax, rax
+    code.Emit({0xc3});              // ret
+
+    constexpr std::uint64_t imageBase = 0x180000000ULL;
+
+    // Fake vtable in data section: 32 QWORD entries, each pointing to thunkVa
+    const auto fakeVtableRva = data.size();
+    data.resize(fakeVtableRva + 32 * 8);
+    for (std::size_t i = 0; i < 32; ++i)
+        Io::WriteU64(data, fakeVtableRva + i * 8, imageBase + thunkRva);
+    const auto fakeVtableVa = imageBase + fakeVtableRva;
+
+    // Emit "return fake vtable VA" stub using RIP-relative lea
+    const auto fakeStubRva = code.GetRva();
+    const auto disp32 = static_cast<std::int32_t>(fakeVtableVa - (fakeStubRva + 7));
+    code.Emit({0x48, 0x8d, 0x05});  // lea rax, [rip + disp32]
+    code.Emit({(std::uint8_t)(disp32 & 0xFF), (std::uint8_t)((disp32 >> 8) & 0xFF),
+               (std::uint8_t)((disp32 >> 16) & 0xFF), (std::uint8_t)((disp32 >> 24) & 0xFF)});
+    code.Emit({0xc3});              // ret
+
+    // Generate lazy unresolved import stubs that jmp to fakeStubRva
     for (const auto index : lazyUnresolvedImports) {
-        const auto stubRva = code.GetRva();
-        writeString(errorRvas.at(3 + index), true);
-        raise(0xc0000139u);
-        result.LazyStubs.push_back({imports[index].TargetRva, stubRva});
+        const auto lazyStubRva = code.GetRva();
+        const auto lazyDisp32 = static_cast<std::int32_t>(fakeStubRva - (lazyStubRva + 5));
+        code.Emit({0xe9});  // jmp return_fake_vtable_stub
+        code.Emit({(std::uint8_t)(lazyDisp32 & 0xFF), (std::uint8_t)((lazyDisp32 >> 8) & 0xFF),
+                   (std::uint8_t)((lazyDisp32 >> 16) & 0xFF), (std::uint8_t)((lazyDisp32 >> 24) & 0xFF)});
+        result.LazyStubs.push_back({imports[index].TargetRva, lazyStubRva});
+    }
+
+    // Generate lazy unresolved import stubs that return fake vtable VA
+    for (const auto index : lazyUnresolvedImports) {
+        const auto lazyStubRva = code.GetRva();
+        const auto disp32 = static_cast<std::int32_t>(fakeStubRva - (lazyStubRva + 5));
+        code.Emit({0xe9});  // jmp return_fake_vtable_stub
+        code.Emit({(std::uint8_t)(disp32 & 0xFF), (std::uint8_t)((disp32 >> 8) & 0xFF),
+                   (std::uint8_t)((disp32 >> 16) & 0xFF), (std::uint8_t)((disp32 >> 24) & 0xFF)});
+        result.LazyStubs.push_back({imports[index].TargetRva, lazyStubRva});
     }
 
     Io::WriteU32(data, functionTable - dataRva, result.Code.Rva);

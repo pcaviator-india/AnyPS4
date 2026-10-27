@@ -378,4 +378,32 @@ int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDu
  LibcExit_nid_no_patch(0);
 }
 
+// PS4 NID-alias tables: map PS4-imported NIDs to existing libSceSystemService
+// implementations. NIDs computed from PS4 symbol names (same SHA1+suffix
+// scheme as PS5); PS4 games importing by these NIDs resolve here.
+APS5_EXPORT("JoBqSQt1yyA", sceSystemServiceLoadExec);
+APS5_EXPORT("rPo6tV8D9bM", sceSystemServiceGetStatus);
+APS5_EXPORT("1n37q1Bvc5Y", sceSystemServiceGetDisplaySafeAreaInfo);
+APS5_EXPORT("mPpPxv5CZt4", sceSystemServiceGetHdrToneMapLuminance);
+APS5_EXPORT("3RQ5aQfnstU", sceSystemServiceGetNoticeScreenSkipFlag);
+APS5_EXPORT("Vo5V8KAwCmk", sceSystemServiceHideSplashScreen);
+APS5_EXPORT("fZo48un7LK4", sceSystemServiceParamGetInt);
+APS5_EXPORT("SsC-m-S9JTA", sceSystemServiceParamGetString);
+APS5_EXPORT("XbbJC3E+L5M", sceSystemServicePowerTick);
+APS5_EXPORT("656LMQSrg6U", sceSystemServiceReceiveEvent);
+APS5_EXPORT("3s8cHiCBKBE", sceSystemServiceReportAbnormalTermination);
+APS5_EXPORT("Q3utJvma4Mo", sceSystemServiceSetNoticeScreenSkipFlag);
+APS5_EXPORT("m5CYKX20wfg", sceSystemServiceInitializePlayerDialogParam);
+APS5_EXPORT("64nkF7LGk8w", sceSystemServiceDisableMediaPlay);
+APS5_EXPORT("uInYhy7xa+U", sceSystemServiceReenableMediaPlay);
+APS5_EXPORT("uaieF+glFPs", sceSystemServiceLaunchPlayerDialog);
+APS5_EXPORT("-+3hY+y8bNo", sceSystemServiceLaunchWebBrowser);
+APS5_EXPORT("l4FB3wNa-Ac", sceSystemServiceLaunchApp);
+APS5_EXPORT("x1UB9bwDSOw", sceSystemServiceDisableMusicPlayer);
+APS5_EXPORT("sPuK5ic3GD4", sceSystemServiceOpenChallengeActivity);
+APS5_EXPORT("gELp9ue2ccQ", sceSystemServiceOpenTournamentOccurrence);
+APS5_EXPORT("9kPCz7Or+1Y", sceSystemServiceReenableMusicPlayer);
+APS5_EXPORT("w9wlKcHrmm8", sceSystemServiceShowControllerSettings);
+APS5_EXPORT("NwT2R5lo8P8", sceSystemServiceGetAppIdOfRunningBigApp);
+APS5_EXPORT("N4RkyJh7FtA", sceSystemServiceKillApp);
 }

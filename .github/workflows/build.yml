@@ -257,6 +257,12 @@ jobs:
       - run: cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON
       - run: cmake --build build-relinker --parallel 3
       - run: ctest --test-dir build-relinker --output-on-failure --timeout 120
+      - if: runner.os != 'Windows'
+        name: Run PS4 golden tests (Python)
+        run: |
+          python3 core/relinker/relinker/tests/test_ps4_header.py ${{ github.workspace }}/build-relinker/relinker
+          python3 core/relinker/relinker/tests/test_ps4_minimal.py ${{ github.workspace }}/build-relinker/relinker
+          python3 core/relinker/relinker/tests/test_ps4_syscall_stub.py ${{ github.workspace }}/build-relinker/relinker
 
   register-context:
     needs: eligibility

@@ -24,6 +24,7 @@
 #include "ControlFlow/include/ControlFlow/GraphBuilder.hpp"
 #include "ControlFlow/include/ControlFlow/Structurizer.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include "GcnDecoder/include/GcnDecoder/GcnInstructionDecoder.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/include/Optimization/BindingAllocator.hpp"
 #include "Optimization/include/Optimization/ConstantFolder.hpp"
@@ -99,7 +100,12 @@ std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
     return request.target.subgroupSize;
 }
 
-RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code) {
+RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code, ShaderProfile profile) {
+    if (profile == ShaderProfile::GCN) {
+        GcnInstructionDecoder gcnDecoder;
+        auto gcnProgram = gcnDecoder.Decode(code);
+        return ConvertGcnToRdna(gcnProgram);
+    }
     if (stage != ShaderStageKind::Local) return RdnaInstructionDecoder{}.Decode(code);
     auto program = DecodeRdnaFrontProgram(code);
     static constexpr std::array<std::uint32_t, 1> EndProgram{0xbf810000u};
@@ -133,7 +139,7 @@ std::atomic<std::uint64_t> frontEndBuilds{0};
 struct PreparedControlFlow {
     PreparedControlFlow(const RecompileRequest& request, const SwappcInfo& swappcInfo)
         : stage(request.shader.stage), fallbacks(swappcInfo.linkedCallFallbacks.begin(), swappcInfo.linkedCallFallbacks.end()), swappc(WithFallbacks(swappcInfo, fallbacks)), code(request.shader.code.begin(), request.shader.code.end()),
-          decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
+          decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code, request.target.profile)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
         Structurizer{}.Structurize(cfg);
     }
 

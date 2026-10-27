@@ -9,7 +9,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cxxabi.h>
 #include <exception>
+
+namespace abi = __cxxabiv1;
+
+namespace __cxxabiv1 {
+    int __cxa_thread_atexit(void (*func)(void*), void* arg, void* dso) __attribute__((weak));
+}
 #include <stdexcept>
 #include <typeinfo>
 #include <new>

@@ -4,6 +4,10 @@
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
+
+namespace Cli {
+extern bool g_isPs4Mode;
+}
 #include <algorithm>
 #include <sstream>
 
@@ -153,6 +157,8 @@ RelinkResult RelinkerPipeline::Relink() {
         if (hasOs && hasSysv)
             throw RelinkerException(std::string("Both DT_OS_ and DT_ variants present for ") + name);
         if (!hasOs && !hasSysv) {
+            if (Cli::g_isPs4Mode)
+                return false;
             std::ostringstream message;
             message << "Neither DT_OS_ nor DT_ variant present for " << name << " (tags 0x" << std::hex << osTag << " and 0x" << sysvTag << ")";
             throw RelinkerException(message.str());
@@ -167,12 +173,17 @@ RelinkResult RelinkerPipeline::Relink() {
                 throw RelinkerException(std::string("Adding PT_SCE_DYNLIBDATA base to ") + name + " overflows", value);
             return sceTableBase + value;
         }
+        if (Cli::g_isPs4Mode)
+            return 0;
         return elfReader->TranslateVirtualAddress(getTagValue(sysvTag));
     };
 
     auto readAsSize = [&](const std::int64_t osTag, const std::int64_t sysvTag, const char* name) -> ByteCount {
-        requireExactlyOneOf(osTag, sysvTag, name);
-        return hasTag(osTag) ? getTagValue(osTag) : getTagValue(sysvTag);
+        if (!Cli::g_isPs4Mode)
+            requireExactlyOneOf(osTag, sysvTag, name);
+        if (hasTag(osTag)) return getTagValue(osTag);
+        if (hasTag(sysvTag)) return getTagValue(sysvTag);
+        return 0;
     };
 
     const bool hasPltRelocations = hasTag(DT_OS_PLTRELSZ) || hasTag(DT_PLTRELSZ)
@@ -190,7 +201,7 @@ RelinkResult RelinkerPipeline::Relink() {
     const FileByteOffset dynSymTabOffset = readAsOffset(DT_OS_SYMTAB, DT_SYMTAB, "DT_SYMTAB");
     constexpr std::size_t symEntSize = 24;
     const auto symbolEntrySize = readAsSize(DT_OS_SYMENT, DT_SYMENT, "DT_SYMENT");
-    if (symbolEntrySize != symEntSize)
+    if (!Cli::g_isPs4Mode && symbolEntrySize != symEntSize)
         throw RelinkerException("Unsupported DT_SYMENT value: " + std::to_string(symbolEntrySize) + "; expected 24 bytes");
 
     FileByteOffset dynJmpRelOffset = 0;
@@ -211,7 +222,7 @@ RelinkResult RelinkerPipeline::Relink() {
     const ByteCount dynRelaSize = readAsSize(DT_OS_RELASZ, DT_RELASZ, "DT_RELASZ");
     constexpr std::size_t relaEntSize = 24;
     const auto relocationEntrySize = readAsSize(DT_OS_RELAENT, DT_RELAENT, "DT_RELAENT");
-    if (relocationEntrySize != relaEntSize)
+    if (!Cli::g_isPs4Mode && relocationEntrySize != relaEntSize)
         throw RelinkerException("Unsupported DT_RELAENT value: " + std::to_string(relocationEntrySize) + "; expected 24 bytes");
     if (dynRelaSize % relaEntSize != 0)
         throw RelinkerException("Invalid DT_RELASZ value: " + std::to_string(dynRelaSize) + " bytes; expected a multiple of 24 bytes");
@@ -325,7 +336,7 @@ RelinkResult RelinkerPipeline::Relink() {
                 continue;
 
             if (relType == 8) {
-                if (symIdx != 0 && !isZeroSectionSymbol(symIdx))
+                if (!Cli::g_isPs4Mode && symIdx != 0 && !isZeroSectionSymbol(symIdx))
                     throw RelinkerException("RELATIVE relocation has a nonzero symbol index", pos);
                 continue;
             }
@@ -339,7 +350,7 @@ RelinkResult RelinkerPipeline::Relink() {
             std::memcpy(&nameOff, raw.data() + symOff, 4);
 
             const auto name = readCStr(nameOff);
-            if (name.empty() && (raw.size() - symOff < symEntSize
+            if (!Cli::g_isPs4Mode && name.empty() && (raw.size() - symOff < symEntSize
                                  || std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
                                                 [](const std::uint8_t byte) { return byte != 0; })))
                 throw RelinkerException("Unnamed import symbol is not a null symbol entry", symOff);

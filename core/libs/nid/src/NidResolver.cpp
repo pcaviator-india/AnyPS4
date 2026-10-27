@@ -36,30 +36,35 @@ std::unordered_map<std::string, std::string> ResolveNids(const std::vector<std::
 
     std::unordered_map<std::string, std::string> result;
     result.reserve(exportedNames.size());
+    std::unordered_set<std::string> assignedNids;
+    assignedNids.reserve(exportedNames.size());
 
     for (const std::string& name : exportedNames) {
+        std::string assigned;
         if (excludedExports.contains(NormalizeExportName(name))) {
-            result[name] = name;
-            continue;
-        }
-        if (IsNidNoPatchCut(name)) {
-            result[name] = StripNidNoPatchCut(name);
-            continue;
-        }
-        if (IsNidNoPatch(name)) {
-            result[name] = name;
-            continue;
+            assigned = name;
+        } else if (IsNidNoPatchCut(name)) {
+            assigned = StripNidNoPatchCut(name);
+        } else if (IsNidNoPatch(name)) {
+            assigned = name;
+        } else {
+            const std::string stripped = StripNidPostfix(name);
+            const bool hasPostfix = stripped != name;
+
+            if (!hasPostfix && nameSet.count(name + kNidPostfix)) {
+                assigned = name;
+            } else {
+                assigned = ComputeNid(stripped, libraryName);
+            }
         }
 
-        const std::string stripped = StripNidPostfix(name);
-        const bool hasPostfix = stripped != name;
-
-        if (!hasPostfix && nameSet.count(name + kNidPostfix)) {
+        if (assignedNids.contains(assigned)) {
             result[name] = name;
-            continue;
+            assignedNids.insert(name);
+        } else {
+            result[name] = assigned;
+            assignedNids.insert(assigned);
         }
-
-        result[name] = ComputeNid(stripped, libraryName);
     }
 
     return result;

@@ -13,6 +13,10 @@
 #include <sstream>
 #include <string>
 
+namespace Cli {
+extern bool g_isPs4Mode;
+}
+
 namespace Elfpatcher::Windows {
 
 namespace {
@@ -179,6 +183,8 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                     continue;
                 }
                 if (!loadValue && !storeImmediate && !aluRead) {
+                    if (Cli::g_isPs4Mode)
+                        continue;
                     std::ostringstream message;
                     message << "Unsupported Windows guest TLS instruction (bytes:" << std::hex << std::setfill('0');
                     for (std::size_t index = 0; index < info.Length; ++index)

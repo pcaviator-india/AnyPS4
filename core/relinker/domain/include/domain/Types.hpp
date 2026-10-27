@@ -16,7 +16,10 @@ using FileByteOffset = std::uint64_t;
 using VirtualAddress = std::uint64_t;
 using ByteCount = std::uint64_t;
 
+enum class TargetConsole { PS5, PS4 };
+
 struct ElfHeader {
+    TargetConsole Console = TargetConsole::PS5;
     std::uint16_t Machine;
     std::uint16_t Type;
     std::uint8_t OsAbi;

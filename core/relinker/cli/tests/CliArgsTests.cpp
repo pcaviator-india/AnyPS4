@@ -263,6 +263,20 @@ void sceModulePath() {
     expectThrows({"--sce-module-path", "modules", "--skip-sce-module", "input.elf", "output.elf"}, "--sce-module-path conflicts with --skip-sce-module");
 }
 
+void ps4ExperimentalGraphicsFlag() {
+    const auto args = parse({"--ps4-experimental-graphics", "input.elf", "output.elf"});
+    require(args.ps4Mode, "--ps4-experimental-graphics did not set ps4Mode");
+    require(args.ps4ExperimentalGraphics, "--ps4-experimental-graphics was ignored");
+    require(args.inputPath == "input.elf" && args.outputPath == "output.elf",
+        "flags consumed the positional paths");
+}
+
+void ps4FlagImpliesPs4Mode() {
+    const auto args = parse({"--ps4", "input.elf", "output.elf"});
+    require(args.ps4Mode, "--ps4 did not set ps4Mode");
+    require(!args.ps4ExperimentalGraphics, "--ps4 set experimental graphics");
+}
+
 void targetSelection() {
     const auto macos = parse({"--macos", "input.elf", "output.elf"});
     require(macos.toMacos && !macos.toWindows, "--macos did not select only the macOS target");
@@ -295,6 +309,8 @@ int main() {
         moduleDirectories();
         sceModulePath();
         targetSelection();
+        ps4FlagImpliesPs4Mode();
+        ps4ExperimentalGraphicsFlag();
         executables();
         unusedFilter();
         unusedFilterRejectsBadValues();

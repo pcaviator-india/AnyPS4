@@ -8,9 +8,10 @@
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
 #include <io/BufferUtils.hpp>
 #include <filesystem>
-
-
 #include <utility>
+#include <set>
+
+
 
 namespace Elfpatcher::Windows {
 
@@ -35,7 +36,7 @@ WindowsPePatcher::WindowsPePatcher(const bool windowsGui, std::optional<std::vec
 
 const std::string& WindowsPePatcher::GetDiagnostics() const { return diagnostics; }
 
-std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sourceElf, const std::vector<Domain::ProgramHeader>& originalHeaders, const Domain::SysVDynamicSection& dynamicSection, const std::uint64_t originalPltGotVaddr, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Codegen::TrampolineSite>& trampolines) {
+std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sourceElf, const std::vector<Domain::ProgramHeader>& originalHeaders, const Domain::SysVDynamicSection& dynamicSection, const std::uint64_t originalPltGotVaddr, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Codegen::TrampolineSite>& trampolines, bool /*ps4Mode*/) {
     const auto report = [&](std::uint64_t completed) { if (progress) progress(completed, 10000); };
     report(0);
     diagnostics.clear();
@@ -87,6 +88,35 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         }
     }
     libraries.insert(libraries.begin(), guestPaths.begin(), guestPaths.end());
+
+    // Option A: Load all PRXs from runPath directory (matching AnyPS5's "OS loader binds imports by NID")
+    // runPath defaults to "$ORIGIN/libs" which resolves at runtime to <exe_dir>/libs/.
+    // At build time, strip $ORIGIN/ prefix and scan the remaining path.
+    {
+        std::string scanPath = runPath;
+        if (scanPath == "$ORIGIN" || scanPath.starts_with("$ORIGIN/") || scanPath.starts_with("$ORIGIN\\")) {
+            scanPath = scanPath.substr(scanPath.find_first_not_of("$ORIGIN/\\"));
+        }
+        if (scanPath.empty()) scanPath = ".";
+        std::filesystem::path libsDir(scanPath);
+        if (std::filesystem::exists(libsDir) && std::filesystem::is_directory(libsDir)) {
+            std::set<std::string> existingStems;
+            for (const auto& lib : libraries) {
+                existingStems.insert(std::filesystem::path(lib).stem().string());
+            }
+            int count = 0;
+            for (const auto& entry : std::filesystem::directory_iterator(libsDir)) {
+                if (entry.is_regular_file() && entry.path().extension() == ".prx") {
+                    const auto stem = entry.path().stem().string();
+                    if (!existingStems.contains(stem)) {
+                        libraries.push_back(entry.path().filename().string());
+                        count++;
+                    }
+                }
+            }
+        }
+    }
+
     if (dependencyDiagnostics)
         for (const auto& import : relocations.Imports) diagnostics += import.Name + '\n';
     report(8500);

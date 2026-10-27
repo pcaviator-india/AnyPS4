@@ -16,3 +16,4 @@
 - [ ] Unblocks: <!-- title ID and Game bring-up discussion, e.g. PPSA01325 #3232, or none -->
 - [ ] GPUs tested: <!-- for AGC, shader recompiler or VideoOut changes: vendor, model, driver and OS of each GPU the GPU tests ran on; otherwise n/a -->
 - [ ] AI-assisted: <!-- yes / no -->
+- [ ] PS4: <!-- if touching --ps4 / --ps4-experimental-graphics: ran `ctest -R "ps4_|nid_compute"` locally, no PS5-path change without `--ps4`, flags documented in USAGE.md and ARCHITECTURE.md; otherwise n/a -->

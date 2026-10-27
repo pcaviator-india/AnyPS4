@@ -370,7 +370,7 @@ extern "C" void RecordWrittenPath_nid_no_patch(const std::filesystem::path& path
     registry.dirty[path.lexically_normal()] = true;
 }
 
-extern "C" std::vector<std::filesystem::path> WrittenPaths_nid_no_patch() {
+std::vector<std::filesystem::path> WrittenPaths_nid_no_patch() {
     auto& registry = Written();
     std::lock_guard lock(registry.mutex);
     std::vector<std::filesystem::path> paths;
@@ -424,21 +424,21 @@ extern "C" void BlockPathAlias_nid_no_patch(const char* guestPrefix) {
     aliases.blocked.push_back(prefix);
 }
 
-extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path) {
+std::filesystem::path ResolvePath_nid_no_patch(const char* path) {
     if (!path) { APS5_INVALID_ARG_EX; }
     auto& state = Directories();
     std::lock_guard lock(state.mutex);
     return Resolve(state, path);
 }
 
-extern "C" std::filesystem::path ResolvePathOrRelinkedModule_nid_no_patch(const char* path) {
+std::filesystem::path ResolvePathOrRelinkedModule_nid_no_patch(const char* path) {
     if (!path) { APS5_INVALID_ARG_EX; }
     auto& state = Directories();
     std::lock_guard lock(state.mutex);
     return Resolve(state, path, true);
 }
 
-extern "C" std::filesystem::path RelinkedModulePath_nid_no_patch(const std::filesystem::path& path) {
+std::filesystem::path RelinkedModulePath_nid_no_patch(const std::filesystem::path& path) {
     const auto relinked = RelinkedModuleName(path);
     std::error_code error;
     if (std::filesystem::is_regular_file(relinked, error)) return relinked;
@@ -561,5 +561,13 @@ extern "C" void KeepStandardHandle_nid_no_patch(int descriptor, void* handle) {
 #endif
 
 extern "C" void NotImplemented_nid_no_patch(const char* funcName) {
-    throw std::runtime_error(std::string(funcName) + " not implemented");
+    static std::set<std::string> seen;
+    static std::mutex mutex;
+    if (funcName) {
+        std::lock_guard lock(mutex);
+        if (seen.insert(funcName).second) {
+            std::fprintf(stderr, "[AnyPS4 NotImplemented] %s called (suppressing further logs for this stub)\n", funcName);
+            std::fflush(stderr);
+        }
+    }
 }

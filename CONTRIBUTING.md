@@ -39,6 +39,25 @@ gh workflow run build.yml --repo boykopovar/AnyPS5 --ref main --field pr=1234
 
 This manual run also builds and tests the relinker on Linux, Windows and macOS, regardless of the author's previous contributions or the changed files. The relinker matrix also runs automatically when a pull request targeting `main` is opened, updated or reopened, if its author already has a commit in `main` and it changes a file the relinker-only build uses; full builds never run automatically for pull requests. Every job that runs automatically for pull requests runs only when the pull request changes its files: a `paths` filter on the `pull_request` trigger, or `needs: eligibility` with an `if` on the files output it sets in `build.yml`. The Conventions check fails a workflow change that adds a job without one. All build jobs build the selected pull request merged into the current `main` (GitHub's merge commit), so a pull request that no longer merges cleanly must be rebased first. New commits require another manual run for full builds.
 
+## PS4 pull requests
+
+PS4 translation (`--ps4`, `--ps4-experimental-graphics`) is an experimental feature behind a flag. It must never change PS5 or host behavior when `--ps4` is not passed.
+
+- Branch from `main` and name it `feature/ps4-translation-layer-*` or target the existing `origin/feature/ps4-translation-layer` branch for stacked work.
+- Add or update golden tests under `core/relinker/relinker/tests/` (`test_ps4_header.py`, `test_ps4_minimal.py`, `test_ps4_syscall_stub.py`) and register them in `core/relinker/CMakeLists.txt`.
+- NID vectors go in `core/libs/nid/tests/NidComputeTests.cpp`, registered in `core/libs/CMakeLists.txt`.
+- Run the relinker-only build locally and the new PS4 Python tests before opening the PR:
+
+  ```sh
+  cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON
+  cmake --build build-relinker
+  ctest --test-dir build-relinker --output-on-failure -R "ps4_|nid_compute"
+  ```
+
+- CI runs the PS4 Python golden tests on every relinker matrix job (Linux and macOS) via `.github/workflows/build.yml`.
+- Document user-facing flags in `docs/user/USAGE.md` and architecture in `docs/dev/ARCHITECTURE.md`. Record known limitations in `docs/dev/debt/relinker.md`.
+- PR checklist: confirm no PS5-path behavior change without `--ps4`; confirm `--ps4-experimental-graphics` is documented as experimental/minimal coverage.
+
 With `--field full=false`, the manual run skips the full builds and runs only the relinker matrix on Linux, Windows and macOS, if the pull request changes a file the relinker-only build uses, such as the Python tools and their tests in `tools/`.
 
 The Conventions check runs automatically for every contributor, including first-time contributors. It uses the base branch checker and reads pull request Git objects without executing pull request code. The Conventions check runs on every pull request and fails when a rule on this page is broken. It accepts code comments only when the pull request also changes [technical debt](docs/dev/TechnicalDebt.md), the index or a file in `docs/dev/debt/`, and only UTF-8 text files. Run it locally before pushing:

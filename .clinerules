@@ -1,0 +1,12 @@
+# .clinerules — PS4 Translation Layer (anti-deviation)
+
+1. **Single source of truth**: `PS4_REUSE_ANALYSIS.md` (findings) + `Plan.MD` (phases). If a task conflicts with either, stop and ask before proceeding.
+2. **Strict phase order**: 0 → 1 → 2 → 3 → 4. Never start the next phase until the current phase's exit criteria in `Plan.MD` are met and recorded. Phase 0 is read-only (no code edits).
+3. **No forks**: unified binary with `--ps4`. Do not duplicate `core/relinker/**`, `core/libs/prx/*`, or `core/shader/recompiler/*` per console. Branch on `TargetConsole/Ps4Mode` only at the touchpoints listed in `PS4_REUSE_ANALYSIS.md §3`.
+4. **PS5 path frozen**: default (no `--ps4`) behavior must stay byte-identical. Any shared-code change needs a regression test proving the PS5 path is unaffected.
+5. **Reuse first**: `PT_SCE_* (0x61000000/01/10)`, `DT_SCE_* (0x61000007..3F)`, and `NidCompute.cpp` are shared — do not redefine or reimplement without a failing vector test.
+6. **Allowlist, not silent accept**: PS4 header support (`ET_SCE_EXEC 0xFE00 / ASLR 0xFE10 / DYNAMIC 0xFE18`, `OSABI 0x09`) only activates under `--ps4`. Never loosen default validation.
+7. **Small diffs + tests**: each change touches the minimal touchpoint set, updates `USAGE.md`/`ARCHITECTURE.md` when user-visible, and adds/extends a test in `core/relinker/**/tests` (or python tests where they exist).
+8. **No scope creep**: encrypted SELF, full GNM/GCN, lazy-binding redesign, and whole-lib duplication are out of v1. GCN work stays behind `--ps4-experimental-graphics`.
+9. **Verify before claiming**: file/line references must be checked with read/search tools; NID/SELF claims need a vector or sample log. Append Phase 0 results to the analysis doc.
+10. **Stop conditions**: if a PS4 sample needs a pipeline/patcher redesign (not a flag branch), or NID vectors mismatch the shared algorithm, halt implementation and propose a revised plan instead of improvising.

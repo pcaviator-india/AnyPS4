@@ -43,6 +43,16 @@ flowchart LR
 ```
 
 - [`core/relinker/main.cpp`](../../core/relinker/main.cpp) runs the steps in this order. `--to-intel` is optional, see [USAGE.md](../user/USAGE.md).
+
+## PS4 translation (`--ps4`)
+
+With `--ps4`, the relinker accepts PS4 ELF images (`ET_SCE_EXEC 0xFE00`, `ET_SCE_EXEC_ASLR 0xFE10`, `ET_SCE_DYNAMIC 0xFE18`) with FreeBSD OSABI (`0x09`) in addition to PS5 types. PS4-specific validation is relaxed behind the flag: FDE function-range checks, dynamic relocation symbol-index validation, and dynsym null-entry checks are all permissive for PS4 inputs. Linux output in `--ps4` mode writes `ET_SCE_EXEC`/`ET_SCE_DYNAMIC` with FreeBSD OSABI; without `--ps4` the output is a clean SysV host ELF.
+
+`--ps4-experimental-graphics` additionally selects the PS4 graphics path: `VulkanDevice::buildTarget()` sets `ShaderProfile::GCN` when `APS5_PS4_EXPERIMENTAL_GRAPHICS=1`, so GCN shaders are decoded to the shared Rdna IR and emitted as SPIR-V. Coverage is minimal and GNM is out of scope; do not use for production titles. See [USAGE.md](../user/USAGE.md).
+
+- PS4 header acceptance is covered by `core/relinker/relinker/tests/test_ps4_header.py`; the NID vector by `core/libs/nid/tests/NidComputeTests.cpp`; minimal PS4→host conversion by `core/relinker/relinker/tests/test_ps4_minimal.py`; PS4 syscall-stub handling by `core/relinker/relinker/tests/test_ps4_syscall_stub.py`.
+- Known technical debt: a `PT_SCE_RELRO` segment not covered by any `PT_LOAD` (the PS4 layout) is loaded as read-write and stays writable after relocation. FreeBSD's rtld makes `PT_GNU_RELRO` read-only once relocation is done; what the console does with `PT_SCE_RELRO` is not checked ([debt/relinker.md:14](../../docs/dev/debt/relinker.md)).
+
 - Each library in [`core/libs/prx`](../../core/libs/prx) builds as a shared library. After the build, `nid_patcher` ([`core/libs/nid`](../../core/libs/nid)) renames every export to its NID, computed from the function name. `APS5_EXPORT("<nid>", func)` sets the NID directly when the name is unknown. Every other library keeps the names libc exports; it reads them from `libc.exports`, which `nid_patcher --write-export-list` rewrites only when that list changes. On Windows the link writes each import library with `SOURCE_DATE_EPOCH=0` and `ranlib -D` and replaces it only when its bytes change. A source edit that keeps the exports therefore relinks and re-patches only its own library.
 
 ## Windows deferred module initialization

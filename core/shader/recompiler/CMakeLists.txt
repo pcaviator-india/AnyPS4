@@ -49,6 +49,10 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaImageOpDecoder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaExportOpDecoder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaDescriptorFormat.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/GcnDecoder/src/GcnOpcode.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/GcnDecoder/src/GcnInstructionDecoder.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/GcnDecoder/src/GcnProgram.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/GcnDecoder/src/GcnToRdna.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ControlFlow/src/ControlFlowGraph.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ControlFlow/src/GraphBuilder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ControlFlow/src/Structurizer.cpp
@@ -157,6 +161,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${PROJECT_SOURCE_DIR}/core/libs
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/include
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/GcnDecoder/include
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ControlFlow/include
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/include
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/include

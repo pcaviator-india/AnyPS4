@@ -2,6 +2,10 @@
 #include <algorithm>
 #include <cstring>
 
+namespace Cli {
+extern bool g_isPs4Mode;
+}
+
 namespace Relinker {
 
 std::optional<VirtualAddress> FindSceCodeEnd(std::span<const std::uint8_t> segment, VirtualAddress segmentVAddr, const std::vector<UnusedNidFilter::StrictCodeRegion>& functions, VirtualAddress pltGot, ByteCount pltRelocationsSize) {
@@ -29,8 +33,11 @@ std::optional<VirtualAddress> FindSceCodeEnd(std::span<const std::uint8_t> segme
             break;
         }
     }
-    if (!plt)
+    if (!plt) {
+        if (Cli::g_isPs4Mode)
+            return codeEnd;
         throw RelinkerException("PLT not found after the last unwind function", codeEnd);
+    }
     const ByteCount pltSize = 16 * (1 + pltRelocationsSize / 24);
     if (pltSize > segment.size() - *plt)
         throw RelinkerException("PLT exceeds executable segment", segmentVAddr + *plt);

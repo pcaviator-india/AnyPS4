@@ -179,7 +179,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const std::string& runPath,
     const bool lazyBinding,
     const bool dependencyDiagnostics,
-    const std::vector<Codegen::TrampolineSite>& trampolines)
+    const std::vector<Codegen::TrampolineSite>& trampolines,
+    bool ps4Mode)
 {
     if (dependencyDiagnostics)
         throw Domain::RelinkerException("Linux target does not support --windows-diagnostics");
@@ -198,8 +199,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
 
     std::vector<std::uint8_t> buf = std::move(sourceElf);
 
-    const std::uint32_t type = _fixedBase ? ET_EXEC : ET_DYN;
-    buf[kEhdrOsAbiOffset] = 0;
+    const std::uint32_t type = ps4Mode ? (_fixedBase ? ET_SCE_EXEC : ET_SCE_DYNAMIC) : (_fixedBase ? ET_EXEC : ET_DYN);
+    buf[kEhdrOsAbiOffset] = ps4Mode ? ELFOSABI_FREEBSD : 0;
     buf[kEhdrAbiVersionOffset] = 0;
     buf[kEhdrTypeOffset] = static_cast<std::uint8_t>(type & 0xFF);
     buf[kEhdrTypeOffset + 1] = static_cast<std::uint8_t>((type >> 8) & 0xFF);

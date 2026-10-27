@@ -71,7 +71,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     }
 
     auto elfReader = std::make_shared<Relinker::ElfReader>(std::move(sourceBytes));
-    const std::shared_ptr<Relinker::ISyscallScanner> syscallScanner = options.SkipSyscallCheck ? Relinker::MakeNullSyscallScanner() : Relinker::MakeSyscallScanner(inputProgress, options.TrapSdkSyscallStubs);
+    const std::shared_ptr<Relinker::ISyscallScanner> syscallScanner = options.SkipSyscallCheck ? Relinker::MakeNullSyscallScanner() : Relinker::MakeSyscallScanner(inputProgress, options.TrapSdkSyscallStubs, options.Ps4Mode);
 
     const auto pipeline = std::make_shared<Relinker::RelinkerPipeline>(
         elfReader,
@@ -121,7 +121,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     if (!windows) inputProgress.Report({Domain::ProgressStage::Image, Io::Utf8Path(input.InputPath), 0, 1});
     std::vector<std::uint8_t> executableBytes;
     try {
-        executableBytes = patcher->Patch(std::move(sourceBytes), result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, options.RunPath, options.LazyBinding, options.WindowsDiagnostics, trampolines);
+        executableBytes = patcher->Patch(std::move(sourceBytes), result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, options.RunPath, options.LazyBinding, options.WindowsDiagnostics, trampolines, options.Ps4Mode);
     } catch (Domain::RelinkerException& error) {
         if (error.InputPath.empty()) error.InputPath = Io::Utf8Path(input.InputPath);
         throw;

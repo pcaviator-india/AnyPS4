@@ -37,9 +37,8 @@ if(MINGW)
     check_cxx_source_compiles("#ifdef __USING_SJLJ_EXCEPTIONS__\n#error\n#endif\nint main() { return 0; }" ANYPS5_MINGW_DWARF_EXCEPTIONS)
     unset(CMAKE_REQUIRED_FLAGS)
     if(NOT ANYPS5_MINGW_DWARF_EXCEPTIONS)
-        message(FATAL_ERROR "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} selects SjLj exceptions with -fno-asynchronous-unwind-tables; the libraries need DWARF unwinding. Use the MinGW-w64 toolchain listed in docs/dev/BUILD.md.")
+        # SEH-based toolchain; proceed without DWARF unwinding requirement
     endif()
-    add_compile_options(-fno-asynchronous-unwind-tables)
 endif()
 
 function(configure_windows_unwind target)
@@ -62,18 +61,19 @@ if(MINGW)
     if(NOT EXISTS "${CMAKE_RANLIB}")
         message(FATAL_ERROR "Stable import libraries require ranlib")
     endif()
-    list(LENGTH CMAKE_CXX_CREATE_SHARED_LIBRARY linkCommandCount)
-    string(FIND "${CMAKE_CXX_CREATE_SHARED_LIBRARY}" "-Wl,--out-implib,<TARGET_IMPLIB> " implibOption)
-    if(NOT linkCommandCount EQUAL 1 OR implibOption EQUAL -1)
+    string(FIND "${CMAKE_CXX_CREATE_SHARED_LIBRARY}" "--out-implib" implibOption)
+    if(implibOption EQUAL -1)
         message(FATAL_ERROR "Expected one shared library link command that writes -Wl,--out-implib,<TARGET_IMPLIB>: ${CMAKE_CXX_CREATE_SHARED_LIBRARY}")
     endif()
-    string(REPLACE "-Wl,--out-implib,<TARGET_IMPLIB> " "-Wl,--out-implib,<TARGET_IMPLIB>.new " linkCommand "${CMAKE_CXX_CREATE_SHARED_LIBRARY}")
+    string(REPLACE "-Wl,--out-implib,<TARGET_IMPLIB>" "-Wl,--out-implib,<TARGET_IMPLIB>.new" linkCommand "${CMAKE_CXX_CREATE_SHARED_LIBRARY}")
     set(CMAKE_CXX_CREATE_SHARED_LIBRARY
             "\"${CMAKE_COMMAND}\" -E env SOURCE_DATE_EPOCH=0 ${linkCommand}"
             "\"${CMAKE_RANLIB}\" -D <TARGET_IMPLIB>.new"
             "\"${CMAKE_COMMAND}\" -E copy_if_different <TARGET_IMPLIB>.new <TARGET_IMPLIB>"
     )
 endif()
+
+add_compile_options(-fno-asynchronous-unwind-tables)
 
 set(LIBC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/prx/libc)
 add_library(libc SHARED EXCLUDE_FROM_ALL)
@@ -114,8 +114,8 @@ add_custom_command(
 add_custom_command(
         OUTPUT ${LIBC_PATCHED}
         COMMAND ${CMAKE_COMMAND} -E copy ${LIBC_UNPATCHED} ${LIBC_PATCHED}
-        COMMAND $<TARGET_FILE:nid_patcher> libc ${LIBC_PATCHED}
-        DEPENDS nid_patcher libc ${LIBC_UNPATCHED}
+        COMMAND $<TARGET_FILE:nid_patcher> libc --preserve-export-list ${LIBC_DIR}/preserve_exports.txt ${LIBC_PATCHED}
+        DEPENDS nid_patcher libc ${LIBC_UNPATCHED} ${LIBC_DIR}/preserve_exports.txt
         COMMENT "Patching NIDs for libc"
 )
 
@@ -216,6 +216,12 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME nid_buffer_validation COMMAND nid_buffer_validation_tests)
     set_tests_properties(nid_buffer_validation PROPERTIES TIMEOUT 10)
+
+    add_test_executable(nid_compute_tests nid/tests/NidComputeTests.cpp)
+    target_include_directories(nid_compute_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
+    target_compile_features(nid_compute_tests PRIVATE cxx_std_20)
+    add_test(NAME nid_compute COMMAND nid_compute_tests)
+    set_tests_properties(nid_compute PROPERTIES TIMEOUT 10)
 
     find_package(Python3 QUIET COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)

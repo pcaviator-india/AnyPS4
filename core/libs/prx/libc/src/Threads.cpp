@@ -14,6 +14,12 @@
 #include <system_error>
 #include <thread>
 #include <time.h>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -226,11 +232,11 @@ int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHan
     if (!target)
         APS5_INVALID_ARG_EX;
     const auto deadline = XtimeDeadline(*target, "_Cnd_timedwait");
-    constexpr auto maxDuration = std::chrono::system_clock::duration::max();
-    constexpr auto minDuration = std::chrono::system_clock::duration::min();
-    constexpr auto maxSeconds = std::chrono::duration_cast<std::chrono::seconds>(maxDuration).count();
-    constexpr auto minSeconds = std::chrono::duration_cast<std::chrono::seconds>(minDuration).count();
-    constexpr auto maxNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(maxDuration - std::chrono::seconds(maxSeconds)).count();
+    auto maxDuration = std::chrono::system_clock::duration::max();
+    auto minDuration = std::chrono::system_clock::duration::min();
+    auto maxSeconds = std::chrono::duration_cast<std::chrono::seconds>(maxDuration).count();
+    auto minSeconds = std::chrono::duration_cast<std::chrono::seconds>(minDuration).count();
+    auto maxNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(maxDuration - std::chrono::seconds(maxSeconds)).count();
     if (deadline.tv_sec > maxSeconds || (deadline.tv_sec == maxSeconds && deadline.tv_nsec > maxNanos) ||
         deadline.tv_sec < minSeconds)
         throw std::overflow_error("_Cnd_timedwait: xtime seconds overflow");
@@ -245,9 +251,11 @@ int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHan
     std::unique_lock lock(mutex->native, std::adopt_lock);
     bool timeout = false;
     try {
-        const auto deadlineTime = std::chrono::system_clock::time_point(
-            std::chrono::seconds(deadline.tv_sec) + std::chrono::nanoseconds(deadline.tv_nsec));
-        timeout = (condition->native.wait_until(lock, deadlineTime) == std::cv_status::timeout);
+        const auto deadlineTime = std::chrono::time_point<std::chrono::system_clock>(
+            std::chrono::duration_cast<std::chrono::system_clock::duration>(
+                std::chrono::seconds(deadline.tv_sec) + std::chrono::nanoseconds(deadline.tv_nsec)));
+        auto waitResult = condition->native.wait_until(lock, deadlineTime);
+        timeout = (static_cast<int>(waitResult) == static_cast<int>(std::cv_status::timeout));
     } catch (const std::system_error&) {
         lock.release();
         mutex->owner.store(std::this_thread::get_id(), std::memory_order_release);
@@ -275,22 +283,41 @@ int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
         APS5_INVALID_ARG_EX;
     const auto deadline = XtimeDeadline(*target, "_Thrd_sleep");
     for (;;) {
+#if defined(_WIN32)
+        FILETIME ft;
+        GetSystemTimeAsFileTime(&ft);
+        // FILETIME: 100-nanosecond intervals since Jan 1, 1601 (UTC)
+        const std::uint64_t epochDiff = 11644473600ULL; // seconds between 1601 and 1970
+        std::uint64_t now100ns = (static_cast<std::uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+        std::int64_t nowSec = static_cast<std::int64_t>(now100ns / 10000000ULL) - static_cast<std::int64_t>(epochDiff);
+        std::int64_t nowNsec = static_cast<std::int64_t>((now100ns % 10000000ULL) * 100ULL);
+#else
         timespec now{};
         if (clock_gettime(CLOCK_REALTIME, &now) != 0)
             throw std::runtime_error("_Thrd_sleep: reading the realtime clock failed");
-        if (now.tv_sec > deadline.tv_sec || (now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec))
+        std::int64_t nowSec = now.tv_sec;
+        std::int64_t nowNsec = now.tv_nsec;
+#endif
+        if (nowSec > deadline.tv_sec || (nowSec == deadline.tv_sec && nowNsec >= deadline.tv_nsec))
             return threadSuccess;
-        timespec remaining{static_cast<time_t>(deadline.tv_sec - now.tv_sec), static_cast<long>(deadline.tv_nsec - now.tv_nsec)};
-        if (remaining.tv_nsec < 0) {
-            remaining.tv_nsec += nanosPerSecond;
-            --remaining.tv_sec;
+        std::int64_t remainingSec = deadline.tv_sec - nowSec;
+        std::int64_t remainingNsec = deadline.tv_nsec - nowNsec;
+        if (remainingNsec < 0) {
+            remainingNsec += nanosPerSecond;
+            --remainingSec;
         }
-        remaining.tv_sec = std::min<time_t>(remaining.tv_sec, longestSleepSeconds);
+        remainingSec = std::min<std::int64_t>(remainingSec, longestSleepSeconds);
+#if defined(_WIN32)
+        DWORD ms = static_cast<DWORD>(remainingSec * 1000 + remainingNsec / 1000000);
+        if (ms > 0) Sleep(ms);
+#else
+        timespec remaining{static_cast<time_t>(remainingSec), static_cast<long>(remainingNsec)};
         if (nanosleep(&remaining, nullptr) != 0) {
             if (errno == EINTR)
                 continue;
             throw std::runtime_error("_Thrd_sleep: nanosleep failed");
         }
+#endif
     }
 }
 

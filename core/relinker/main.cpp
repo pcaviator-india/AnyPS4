@@ -56,6 +56,7 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     options.TrapSdkSyscallStubs = args.trapSdkSyscallStubs;
     options.UnusedFilterLevel = args.unusedFilterLevel;
     options.LazyBinding = args.lazyBinding;
+    options.Ps4Mode = args.ps4Mode;
     options.RunPath = args.runPath;
     options.WindowsGui = args.windowsGui;
     options.TraceImports = args.traceImports;
@@ -226,6 +227,15 @@ int Run(const int argc, char* argv[]) {
 
         progress.IncludeFile(args.inputPath);
         progress.IncludeFile(absPath);
+
+            // Resolve $ORIGIN in runPath to the output directory so the
+            // relinker can scan libs/ for PRX stubs at build time.
+            if (args.runPath == "$ORIGIN" || args.runPath.starts_with("$ORIGIN/") || args.runPath.starts_with("$ORIGIN\\")) {
+                std::string remainder = args.runPath.substr(args.runPath.find_first_not_of("$ORIGIN/\\"));
+                if (remainder.empty()) remainder = "libs";
+                args.runPath = (Io::NativePath(absPath).parent_path() / Io::NativePath(remainder)).string();
+            }
+
         for (const auto& extra : extraExecutables) {
             progress.IncludeFile(Io::Utf8Path(extra.Input));
             progress.IncludeFile(Io::Utf8Path(extra.Output));

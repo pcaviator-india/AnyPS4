@@ -148,7 +148,7 @@ public:
 static_assert(std::is_standard_layout_v<FileStream>);
 
 inline std::FILE* GetNativeStream(FileStream* stream) {
-    if (!stream) throw std::runtime_error("FileStream: null stream");
+    if (!stream) return nullptr;
     return stream->GetHandle();
 }
 

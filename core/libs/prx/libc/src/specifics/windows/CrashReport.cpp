@@ -15,6 +15,7 @@
 #include <iterator>
 #include <utility>
 #include <mutex>
+#include <intrin.h>
 #include "Sse4aEmulation.hpp"
 
 namespace {
@@ -538,7 +539,11 @@ void ReportBacktrace(const char* what, bool reportThreads) {
         DescribeAddress(reinterpret_cast<std::uint64_t>(frames[i]), line, sizeof(line));
         Report("    #%u %s\n", static_cast<unsigned>(i), line);
     }
-    ReportStackCandidates(reinterpret_cast<std::uint64_t>(__builtin_frame_address(0)), 32, 0x4000);
+#if defined(_MSC_VER)
+    ReportStackCandidates(reinterpret_cast<std::uint64_t>(_AddressOfReturnAddress()), 32, 0x4000);
+#else
+    ReportStackCandidates(reinterpret_cast<std::uint64_t>(__builtin_return_address(0)), 32, 0x4000);
+#endif
     ReportCallTrace();
     if (reportThreads) ReportAllThreads();
     std::fflush(stderr);

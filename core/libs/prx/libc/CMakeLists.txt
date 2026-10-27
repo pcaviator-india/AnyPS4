@@ -49,8 +49,13 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CxxAbiSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Threads.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
 )
+
+if(NOT MSVC)
+    target_sources(libc PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
+    )
+endif()
 
 target_include_directories(libc PRIVATE
         ${LIBS_INCLUDE_DIR}

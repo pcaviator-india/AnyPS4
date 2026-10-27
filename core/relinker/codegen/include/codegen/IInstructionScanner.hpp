@@ -17,7 +17,14 @@ public:
     virtual void VisitCodeSection(const std::vector<std::uint8_t>& codeSection, Domain::FileByteOffset codeSectionOffset, Domain::FileByteOffset codeSectionSize, const std::function<void(const InstructionMatch&)>& visit) const = 0;
 };
 
-std::unique_ptr<IInstructionScanner> MakeInstructionScanner(std::function<void(std::uint64_t, std::uint64_t)> progress = {});
+struct InstructionScannerOptions {
+    // PS4 executables can hold trailing non-code bytes after the last function
+    // in the executable segment; when set, the scanner stops at the first
+    // undecodable (non-zero) tail instead of failing.
+    bool stopAtTrailingData = false;
+};
+
+std::unique_ptr<IInstructionScanner> MakeInstructionScanner(std::function<void(std::uint64_t, std::uint64_t)> progress = {}, InstructionScannerOptions options = {});
 
 }
 
