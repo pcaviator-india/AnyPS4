@@ -72,3 +72,19 @@ AnyPS5 uses "OS loader binds imports by NID" — the native OS dynamic linker re
 by matching NID-named symbols in loaded PRXs. AnyPS4 should do the same on Windows: load ALL
 PRXs from `libs/` at startup, then let the OS loader bind imports by NID name matching.
 No NID patcher needed.
+
+## New GUI Feature: Unwrapped Files Tab ✅ ADDED
+
+- **File**: `tools-fetch/main_app.py`
+- **Change**: Wrapped existing UI in `ttk.Notebook` with two tabs:
+  1. **PKG Processing** — original tab (unchanged functionality)
+  2. **Unwrapped Files** — new tab for loading already-unwrapped ELF/PRX files
+- **Features**:
+  - Select one or more unwrapped ELF / eboot files via file dialog
+  - Select one or more unwrapped PRX / module files via file dialog
+  - Display selected files in scrollable listboxes
+  - Remove selected / Clear all buttons for each list
+  - "Confirm / Load Unwrapped Files" button saves paths to settings.json
+  - Paths persist across sessions via `unwrapped_elf_files` and `unwrapped_prx_files` settings keys
+  - Status label shows count of loaded files
+  - Confirmed paths are logged to the application log for traceability

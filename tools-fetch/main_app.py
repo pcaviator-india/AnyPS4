@@ -70,6 +70,8 @@ DEFAULTS = {
     "targets": ["windows"],
     "prx_source_dir": PRX_SOURCE_DIR,
     "patch_nids": True,
+    "unwrapped_elf_files": [],
+    "unwrapped_prx_files": [],
 }
 
 
@@ -243,27 +245,38 @@ class App:
         self.worker_thread = None
         self.stop_requested = False
 
+        # Unwrapped file selections (already-unwrapped ELF / PRX files)
+        self.unwrapped_elf_files = list(
+            self.settings.get("unwrapped_elf_files", [])
+        )
+        self.unwrapped_prx_files = list(
+            self.settings.get("unwrapped_prx_files", [])
+        )
+
         self._build_ui()
         self._refresh_pkg_list()
         self._auto_detect_tools()
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
-        frame = ttk.Frame(self.root, padding=10)
-        frame.pack(fill=tk.BOTH, expand=True)
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        self._folder_row(frame, "PKG folder:", self.pkg_folder,
+        tab_pkg = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab_pkg, text="PKG Processing")
+
+        self._folder_row(tab_pkg, "PKG folder:", self.pkg_folder,
                          self._browse_pkg_folder)
-        self._folder_row(frame, "Export folder:", self.output_folder,
+        self._folder_row(tab_pkg, "Export folder:", self.output_folder,
                          self._browse_output_folder)
-        self._folder_row(frame, "Temp folder:", self.temp_folder,
+        self._folder_row(tab_pkg, "Temp folder:", self.temp_folder,
                          self._browse_temp_folder)
 
-        ttk.Label(frame, text="Found PKG files:").pack(
+        ttk.Label(tab_pkg, text="Found PKG files:").pack(
             anchor=tk.W, pady=(10, 0)
         )
 
-        list_frame = ttk.Frame(frame)
+        list_frame = ttk.Frame(tab_pkg)
         list_frame.pack(fill=tk.BOTH, expand=True, pady=4)
         self.pkg_tree = ttk.Treeview(
             list_frame, columns=("select", "name", "size"), show="headings", height=10
@@ -282,7 +295,7 @@ class App:
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.pkg_tree.bind("<Button-1>", self._on_tree_click)
 
-        opts = ttk.LabelFrame(frame, text="Options", padding=6)
+        opts = ttk.LabelFrame(tab_pkg, text="Options", padding=6)
         opts.pack(fill=tk.X, pady=8)
         ttk.Checkbutton(
             opts, text="Skip SCE module relinking",
@@ -301,7 +314,7 @@ class App:
             variable=self.auto_detect
         ).pack(side=tk.LEFT, padx=4)
 
-        prx_row = ttk.Frame(frame)
+        prx_row = ttk.Frame(tab_pkg)
         prx_row.pack(fill=tk.X, pady=3)
         ttk.Label(prx_row, text="PRX source:").pack(side=tk.LEFT)
         ttk.Entry(prx_row, textvariable=self.prx_source_dir).pack(
@@ -312,7 +325,7 @@ class App:
             command=self._browse_prx_source
         ).pack(side=tk.LEFT)
 
-        rel_row = ttk.Frame(frame)
+        rel_row = ttk.Frame(tab_pkg)
         rel_row.pack(fill=tk.X, pady=3)
         ttk.Label(rel_row, text="Relinker:").pack(side=tk.LEFT)
         ttk.Entry(rel_row, textvariable=self.relinker_path).pack(
@@ -323,7 +336,7 @@ class App:
             command=self._browse_relinker
         ).pack(side=tk.LEFT)
 
-        nid_row = ttk.Frame(frame)
+        nid_row = ttk.Frame(tab_pkg)
         nid_row.pack(fill=tk.X, pady=3)
         ttk.Label(nid_row, text="NID patcher:").pack(side=tk.LEFT)
         ttk.Entry(nid_row, textvariable=self.nid_patcher_path).pack(
@@ -334,10 +347,10 @@ class App:
             command=self._browse_nid_patcher
         ).pack(side=tk.LEFT)
 
-        self.progress = ttk.Progressbar(frame, orient=tk.HORIZONTAL, mode="determinate")
+        self.progress = ttk.Progressbar(tab_pkg, orient=tk.HORIZONTAL, mode="determinate")
         self.progress.pack(fill=tk.X, pady=(10, 0))
 
-        btn_frame = ttk.Frame(frame)
+        btn_frame = ttk.Frame(tab_pkg)
         btn_frame.pack(fill=tk.X, pady=8)
         self.btn_process = ttk.Button(
             btn_frame, text="Process Selected PKGs",
@@ -361,8 +374,8 @@ class App:
             command=self._request_stop
         ).pack(side=tk.LEFT, padx=4)
 
-        ttk.Label(frame, text="Log:").pack(anchor=tk.W, pady=(8, 0))
-        log_frame = ttk.Frame(frame)
+        ttk.Label(tab_pkg, text="Log:").pack(anchor=tk.W, pady=(8, 0))
+        log_frame = ttk.Frame(tab_pkg)
         log_frame.pack(fill=tk.BOTH, expand=True)
         self.log_text = tk.Text(log_frame, height=10, wrap=tk.WORD)
         log_scroll = ttk.Scrollbar(
@@ -374,9 +387,178 @@ class App:
 
         self.status = tk.StringVar(value="Ready")
         ttk.Label(
-            frame, textvariable=self.status, relief=tk.SUNKEN, anchor=tk.W
+            tab_pkg, textvariable=self.status, relief=tk.SUNKEN, anchor=tk.W
         ).pack(fill=tk.X, pady=(6, 0))
 
+        # ---- Tab 2: Unwrapped Files ----
+        tab_unwrapped = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab_unwrapped, text="Unwrapped Files")
+
+        # --- ELF files section ---
+        ttk.Label(tab_unwrapped, text="Unwrapped ELF / eboot files:").pack(
+            anchor=tk.W, pady=(0, 4)
+        )
+        elf_frame = ttk.Frame(tab_unwrapped)
+        elf_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        self.elf_listbox = tk.Listbox(elf_frame, height=8, selectmode=tk.EXTENDED)
+        elf_scroll = ttk.Scrollbar(elf_frame, orient=tk.VERTICAL,
+                                   command=self.elf_listbox.yview)
+        self.elf_listbox.configure(yscrollcommand=elf_scroll.set)
+        self.elf_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        elf_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        elf_btn_frame = ttk.Frame(tab_unwrapped)
+        elf_btn_frame.pack(fill=tk.X, pady=(0, 8))
+        ttk.Button(
+            elf_btn_frame, text="Add ELF file(s)",
+            command=self._add_elf_files
+        ).pack(side=tk.LEFT, padx=4)
+        ttk.Button(
+            elf_btn_frame, text="Remove selected",
+            command=self._remove_selected_elf
+        ).pack(side=tk.LEFT, padx=4)
+        ttk.Button(
+            elf_btn_frame, text="Clear all",
+            command=self._clear_elf_files
+        ).pack(side=tk.LEFT, padx=4)
+
+        # --- PRX files section ---
+        ttk.Label(tab_unwrapped, text="Unwrapped PRX / module files:").pack(
+            anchor=tk.W, pady=(12, 4)
+        )
+        prx_frame = ttk.Frame(tab_unwrapped)
+        prx_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        self.prx_listbox = tk.Listbox(prx_frame, height=8, selectmode=tk.EXTENDED)
+        prx_scroll = ttk.Scrollbar(prx_frame, orient=tk.VERTICAL,
+                                   command=self.prx_listbox.yview)
+        self.prx_listbox.configure(yscrollcommand=prx_scroll.set)
+        self.prx_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        prx_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        prx_btn_frame = ttk.Frame(tab_unwrapped)
+        prx_btn_frame.pack(fill=tk.X, pady=(0, 8))
+        ttk.Button(
+            prx_btn_frame, text="Add PRX file(s)",
+            command=self._add_prx_files
+        ).pack(side=tk.LEFT, padx=4)
+        ttk.Button(
+            prx_btn_frame, text="Remove selected",
+            command=self._remove_selected_prx
+        ).pack(side=tk.LEFT, padx=4)
+        ttk.Button(
+            prx_btn_frame, text="Clear all",
+            command=self._clear_prx_files
+        ).pack(side=tk.LEFT, padx=4)
+
+        # --- Confirm / Load button ---
+        confirm_frame = ttk.Frame(tab_unwrapped)
+        confirm_frame.pack(fill=tk.X, pady=(16, 0))
+        self.btn_confirm_unwrapped = ttk.Button(
+            confirm_frame, text="Confirm / Load Unwrapped Files",
+            command=self._confirm_unwrapped_files
+        )
+        self.btn_confirm_unwrapped.pack(side=tk.LEFT, padx=4)
+        self.unwrapped_status = tk.StringVar(value="No files loaded")
+        ttk.Label(
+            confirm_frame, textvariable=self.unwrapped_status,
+            relief=tk.SUNKEN, anchor=tk.W
+        ).pack(side=tk.LEFT, padx=12, fill=tk.X, expand=True)
+
+        # Populate lists from saved settings
+        self._refresh_elf_listbox()
+        self._refresh_prx_listbox()
+        self._update_unwrapped_status()
+
+    # -------------------------------------------------------------- unwrapped files tab
+    def _refresh_elf_listbox(self):
+        self.elf_listbox.delete(0, tk.END)
+        for path in self.unwrapped_elf_files:
+            self.elf_listbox.insert(tk.END, path)
+
+    def _refresh_prx_listbox(self):
+        self.prx_listbox.delete(0, tk.END)
+        for path in self.unwrapped_prx_files:
+            self.prx_listbox.insert(tk.END, path)
+
+    def _update_unwrapped_status(self):
+        n_elf = len(self.unwrapped_elf_files)
+        n_prx = len(self.unwrapped_prx_files)
+        self.unwrapped_status.set(
+            f"{n_elf} ELF file(s), {n_prx} PRX file(s) loaded"
+        )
+
+    def _add_elf_files(self):
+        files = filedialog.askopenfilenames(
+            title="Select unwrapped ELF / eboot files",
+            filetypes=[("ELF files", "*.elf"), ("All files", "*.*")],
+        )
+        if not files:
+            return
+        for f in files:
+            if f not in self.unwrapped_elf_files:
+                self.unwrapped_elf_files.append(f)
+        self._refresh_elf_listbox()
+        self._update_unwrapped_status()
+        self._save_settings(silent=True)
+
+    def _remove_selected_elf(self):
+        selection = list(self.elf_listbox.curselection())
+        selection.reverse()
+        for idx in selection:
+            self.unwrapped_elf_files.pop(idx)
+        self._refresh_elf_listbox()
+        self._update_unwrapped_status()
+        self._save_settings(silent=True)
+
+    def _clear_elf_files(self):
+        self.unwrapped_elf_files.clear()
+        self._refresh_elf_listbox()
+        self._update_unwrapped_status()
+        self._save_settings(silent=True)
+
+    def _add_prx_files(self):
+        files = filedialog.askopenfilenames(
+            title="Select unwrapped PRX / module files",
+            filetypes=[("PRX files", "*.prx"), ("All files", "*.*")],
+        )
+        if not files:
+            return
+        for f in files:
+            if f not in self.unwrapped_prx_files:
+                self.unwrapped_prx_files.append(f)
+        self._refresh_prx_listbox()
+        self._update_unwrapped_status()
+        self._save_settings(silent=True)
+
+    def _remove_selected_prx(self):
+        selection = list(self.prx_listbox.curselection())
+        selection.reverse()
+        for idx in selection:
+            self.unwrapped_prx_files.pop(idx)
+        self._refresh_prx_listbox()
+        self._update_unwrapped_status()
+        self._save_settings(silent=True)
+
+    def _clear_prx_files(self):
+        self.unwrapped_prx_files.clear()
+        self._refresh_prx_listbox()
+        self._update_unwrapped_status()
+        self._save_settings(silent=True)
+
+    def _confirm_unwrapped_files(self):
+        self._save_settings(silent=True)
+        self._log(
+            "Unwrapped files confirmed: "
+            f"{len(self.unwrapped_elf_files)} ELF, "
+            f"{len(self.unwrapped_prx_files)} PRX"
+        )
+        self._log(f"  ELF files: {self.unwrapped_elf_files}")
+        self._log(f"  PRX files: {self.unwrapped_prx_files}")
+        messagebox.showinfo(
+            "Unwrapped files loaded",
+            f"Loaded {len(self.unwrapped_elf_files)} ELF file(s) and "
+            f"{len(self.unwrapped_prx_files)} PRX file(s).\n"
+            "These paths are saved and available for import analysis, "
+            "stub generation, or relinking.",
+        )
 
     def _folder_row(self, parent, label, variable, browse_command):
         row = ttk.Frame(parent)
@@ -942,6 +1124,8 @@ class App:
             "copy_prx": self.copy_prx.get(),
             "patch_nids": self.patch_nids.get(),
             "prx_source_dir": self.prx_source_dir.get(),
+            "unwrapped_elf_files": self.unwrapped_elf_files,
+            "unwrapped_prx_files": self.unwrapped_prx_files,
         })
         save_settings(self.settings)
         if not silent:
