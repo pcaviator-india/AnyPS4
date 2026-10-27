@@ -64,8 +64,13 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
             if (symbol == 0 || symbol >= dynamicSection.DynSymData.size() / 24)
                 throw Domain::RelinkerException("Invalid import symbol index", target);
             const auto symbolOffset = static_cast<std::size_t>(symbol) * 24;
-            if (Io::ReadU16(dynamicSection.DynSymData, symbolOffset + 6) != 0)
-                throw Domain::RelinkerException("Defined symbols require explicit relocation support", target);
+            if (Io::ReadU16(dynamicSection.DynSymData, symbolOffset + 6) != 0) {
+                // Defined symbol — compute its Windows-relocated address and write it
+                const auto symValue = Io::ReadU64(dynamicSection.DynSymData, symbolOffset + 8);
+                image.WritePointer(target, image.GetRelocatedAddress(symValue) + addend);
+                result.BaseRelocations.push_back(rva);
+                continue;
+            }
             const auto name = ReadString(dynamicSection.DynStrData, Io::ReadU32(dynamicSection.DynSymData, symbolOffset));
             if (name.empty() && dynamicSection.DynSymData[symbolOffset + 4] >> 4 != STB_WEAK)
                 throw Domain::RelinkerException("Empty import symbol name", target);

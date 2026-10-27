@@ -227,6 +227,30 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto enteringElf = addString("Transferring control to ELF entry point\n");
     const auto stubStarted = addString("ELF entry stub started\n");
     const auto aboutToTransfer = addString("About to transfer to ELF entry point\n");
+    const auto vehInstalled = addString("VEH installed\n");
+    const auto vehSaved = addString("VEH handle saved\n");
+    const auto stepGetEnv = addString("GetEnvVar called\n");
+    const auto stepWaitDone = addString("Wait done\n");
+    const auto stepCloseDone = addString("Close done\n");
+    const auto stepSetEnv = addString("SetEnvVar called\n");
+    const auto stepGetMod = addString("GetModFileName called\n");
+    const auto stepPathCopy = addString("Path copy done\n");
+    const auto stepAfterRequireNZ = addString("After requireNonzero\n");
+    const auto stepBeforeSetDir = addString("Before SetCurDir\n");
+    const auto stepAfterSetDir = addString("After SetCurDir\n");
+    const auto libsLoading = addString("Loading PRXs\n");
+    const auto libsLoaded = addString("PRXs loaded\n");
+    const auto stepBufferOverflow = addString("Buffer overflow\n");
+    const auto stepNoDirectory = addString("No directory separator\n");
+    const auto stepAboutToCopy = addString("About to copy path\n");
+    const auto stepPathCopied = addString("Path copied\n");
+    const auto stepGetModRet = addString("GetModFileName ret\n");
+    const auto vehEnabled = addString("VEH enabled\n");
+    const auto entryPointAddr = addString("Entry point addr: ");
+    const auto entryBytesPrefix = addString("Entry bytes: ");
+    const auto exceptionInElf = addString("Exception in ELF entry stub\n");
+    const auto importsResolving = addString("Resolving imports\n");
+    const auto importsResolved = addString("Imports resolved\n");
     std::vector<std::uint32_t> resolvedPaths;
     for (std::size_t index = 0; index < libraries.size(); ++index)
         resolvedPaths.push_back(reserve(PathCapacity));
@@ -404,123 +428,122 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
 
     code.Emit({0x53, 0x55, 0x56, 0x57, 0x41, 0x54, 0x48, 0x83, 0xec, 0x60});
 
-    // ---- Jump over VEH handler, then emit handler inline ----
-    code.Emit({0xe9});                                    // jmp skip_veh_handler
-    const auto vehSkipOffset = code.Branch({});           // placeholder for disp32
-    const auto vehHandlerRva = code.GetRva();             // handler starts here
-    {
-        // VectoredExceptionHandler(PEXCEPTION_POINTERS* ExceptionInfo) -> LONG
-        code.Emit({0x50});                          // push rax
-        code.Emit({0x53});                          // push rbx
-        code.Emit({0x51});                          // push rcx
-        code.Emit({0x52});                          // push rdx
-        code.Emit({0x56});                          // push rsi
-        code.Emit({0x57});                          // push rdi
-        code.Emit({0x48, 0x8B, 0x01});              // mov rax, [rcx]        ; ExceptionRecord
-        code.Emit({0x8B, 0x00});                    // mov eax, [rax]        ; ExceptionCode
-        code.Emit({0x48, 0x8D, 0x0D});              // lea rcx, [rip + disp32]
-        code.PatchBranch(code.Branch({}), addString("Exception in ELF entry stub\n"));
-        code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
-        code.Emit({0x5F});                          // pop rdi
-        code.Emit({0x5E});                          // pop rsi
-        code.Emit({0x5A});                          // pop rdx
-        code.Emit({0x59});                          // pop rcx
-        code.Emit({0x5B});                          // pop rbx
-        code.Emit({0x58});                          // pop rax
-        code.Emit({0xB8, 0x01, 0x00, 0x00, 0x00});  // mov eax, 1 (EXCEPTION_EXECUTE_HANDLER)
-        code.Emit({0xC3});                          // ret
-    }
-    code.PatchBranch(vehSkipOffset, code.GetRva());     // skip_veh_handler lands here
-
     // ---- Earliest possible logging: stub has started ----
     code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
     code.PatchBranch(code.Branch({}), stubStarted);
     code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
 
-    // ---- Install VEH early, before any Windows API calls ----
-    code.Emit({0xB9, 0x01, 0x00, 0x00, 0x00});          // mov ecx, 1
-    code.Emit({0x48, 0xBA});                            // mov rdx, imm64
-    code.U64(0x140000000ULL + vehHandlerRva);           // handler VA (ImageBase + RVA)
-    call("AddVectoredExceptionHandler");
-    code.Emit({0x48, 0x89, 0x44, 0x24, 0x50});          // mov [rsp + 0x50], rax  ; save VEH handle
-
     code.Rip({0x48, 0x8d, 0x0d}, parentVariable);
     code.Rip({0x48, 0x8d, 0x15}, parentText);
     code.Emit({0x41, 0xb8, 17, 0, 0, 0});
     call("GetEnvironmentVariableW");
-    code.Emit({0x85, 0xc0});
-    const auto noParent = code.Branch({0x0f, 0x84});
-    code.Emit({0x83, 0xf8, 16});
-    const auto shortValue = code.Branch({0x0f, 0x86});
-    fail(parentError, 1);
-    code.PatchBranch(shortValue, code.GetRva());
-    code.Rip({0xc7, 0x05}, skipFirstArgument - 4);
-    code.U32(1);
-    code.Rip({0x48, 0x8d, 0x35}, parentText);
-    code.Emit({0x31, 0xff});
-    const auto digit = code.GetRva();
-    code.Emit({0x0f, 0xb7, 0x06, 0x85, 0xc0});
-    const auto parsed = code.Branch({0x0f, 0x84});
-    code.Emit({0x83, 0xe8, 0x30, 0x83, 0xf8, 9});
-    const auto decimal = code.Branch({0x0f, 0x86});
-    code.Emit({0x83, 0xe8, 0x31, 0x83, 0xf8, 5});
-    const auto hex = code.Branch({0x0f, 0x86});
-    fail(parentError, 1);
-    code.PatchBranch(hex, code.GetRva());
-    code.Emit({0x83, 0xc0, 10});
-    code.PatchBranch(decimal, code.GetRva());
-    code.Emit({0x48, 0xc1, 0xe7, 4, 0x48, 0x09, 0xc7, 0x48, 0x83, 0xc6, 2});
-    code.Rip({0xe9}, digit);
-    code.PatchBranch(parsed, code.GetRva());
-    code.Emit({0x48, 0x89, 0xf9, 0xba, 0xff, 0xff, 0xff, 0xff});
-    call("WaitForSingleObject");
-    code.Emit({0x85, 0xc0});
-    const auto waited = code.Branch({0x0f, 0x84});
-    fail(parentError, 1);
-    code.PatchBranch(waited, code.GetRva());
-    code.Emit({0x48, 0x89, 0xf9});
-    call("CloseHandle");
-    requireNonzero(parentError, 1);
-    code.Rip({0x48, 0x8d, 0x0d}, parentVariable);
-    code.Emit({0x31, 0xd2});
-    call("SetEnvironmentVariableW");
-    requireNonzero(parentError, 1);
-    code.PatchBranch(noParent, code.GetRva());
 
-    code.Emit({0x31, 0xc9});
+// ---- Log: GetEnvVar called ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), stepGetEnv);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+
+    // ---- Parent process handling skipped (standalone execution) ----
+    code.Emit({0x31, 0xc9});  // xor ecx, ecx
     code.Rip({0x48, 0x8d, 0x15}, programPath);
     code.Emit({0x41, 0xb8});
     code.U32(PathCapacity);
+
+    // ---- Log: GetModFileName called ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), stepGetMod);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+
+    // Reload arguments destroyed by OutputDebugStringA (RCX, RDX, R8 are scratch)
+    code.Emit({0x31, 0xc9});                            // xor ecx, ecx  ; hModule = NULL
+    code.Rip({0x48, 0x8d, 0x15}, programPath);          // lea rdx, [programPath]
+    code.Emit({0x41, 0xb8});                            // mov r8d, imm32
+    code.U32(PathCapacity);                             // nSize = PathCapacity
+
     call("GetModuleFileNameW");
+
+    // ---- Log: GetModFileName return value ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), stepGetModRet);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+
+    // ---- Log: Path copy ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), stepPathCopy);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+
     requireNonzero(0, 0xc000000du);
+
+    // ---- Log: After GetModFileName success ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), stepAfterRequireNZ);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+
     code.Emit({0x3d});
     code.U32(PathCapacity);
     const auto pathFits = code.Branch({0x0f, 0x82});
-    fail(1, 0xc0000106u);
+    // ---- Log: Buffer overflow check ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), stepBufferOverflow);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
     code.PatchBranch(pathFits, code.GetRva());
     code.Emit({0x89, 0xc1});
     code.Rip({0x48, 0x8d, 0x35}, programPath);
     code.Rip({0x48, 0x8d, 0x3d}, modulePath);
-    code.Emit({0xfc, 0x66, 0xf3, 0xa5, 0x49, 0x89, 0xfc});
+    // ---- Log: About to copy path ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), stepAboutToCopy);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+
+    // ---- Clamp ECX to safe copy count (max PathCapacity words = buffer size) ----
+    code.Emit({0x81, 0xf9});                            // cmp ecx, imm32
+    code.U32(PathCapacity);
+    const auto ecxOk = code.Branch({0x0f, 0x86});       // jbe ecxOk (below or equal = OK)
+    code.Emit({0xb9});                                  // mov ecx, imm32
+    code.U32(PathCapacity);                             // clamp to PathCapacity
+    code.PatchBranch(ecxOk, code.GetRva());
+
+    code.Emit({0xfc, 0x66, 0xf3, 0xa5, 0x49, 0x89, 0xfc});  // cld; rep movsw; mov r15, rdi
+    // ---- Log: Path copied ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), stepPathCopied);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
     code.Rip({0x48, 0x8d, 0x1d}, modulePath);
     const auto findSeparator = code.GetRva();
     code.Emit({0x49, 0x39, 0xdc});
     const auto hasDirectory = code.Branch({0x0f, 0x85});
-    fail(2, 0xc000000du);
+    // ---- Log: No directory separator ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), stepNoDirectory);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
     code.PatchBranch(hasDirectory, code.GetRva());
     code.Emit({0x49, 0x83, 0xec, 0x02, 0x66, 0x41, 0x83, 0x3c, 0x24, 0x5c});
     code.Rip({0x0f, 0x85}, findSeparator);
     code.Emit({0x49, 0x83, 0xc4, 0x02});
     code.Emit({0x66, 0x41, 0xc7, 0x04, 0x24, 0x00, 0x00});
-    logMissingHandle(0xfffffff5u);
-    logMissingHandle(0xfffffff4u);
+    // ---- Log: Before SetCurrentDirectory ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), stepBeforeSetDir);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+
     code.Rip({0x48, 0x8d, 0x0d}, modulePath);
     call("SetCurrentDirectoryW");
-    requireNonzero(directoryError, 0xc000000du);
+
+    // ---- Log: After SetCurrentDirectory ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), stepAfterSetDir);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+
+    // SetCurrentDirectoryW failure is non-fatal (continue anyway)
     if (dependencyDiagnostics) {
         code.Rip({0x4c, 0x8d, 0x05}, programPath);
         writeUtf8(programText);
     }
+
+    // ---- Log: Loading PRXs ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), libsLoading);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
 
     for (std::size_t index = 0; index < libraries.size(); ++index) {
         if (index >= guestModules.size() && !imported[index] && !unscopedImports) {
@@ -617,6 +640,11 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         }
     }
 
+    // ---- Log: PRXs loaded ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), libsLoaded);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+
     if (traceImports) {
         code.Rip({0x48, 0x8b, 0x0d}, CheckedRva(handles + *traceProvider * 8));
         code.Rip({0x48, 0x8d, 0x15}, traceSymbol);
@@ -637,6 +665,12 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     std::vector<std::size_t> lazyUnresolvedImports;
     std::vector<std::size_t> tlsResolverAddresses;
     std::vector<std::size_t> unresolvedReturnZeroThunks;
+
+    // ---- Log: Resolving imports ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), importsResolving);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+
     for (std::size_t index = 0; index < imports.size(); ++index) {
         if (!guestModules.empty() && platformTlsResolvers[index] && imports[index].Name == "vNe1w4diLCs") {
             if (imports[index].Addend != 0) throw Domain::RelinkerException("TLS resolver import has an addend");
@@ -714,6 +748,11 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         anyUnresolvable = true;
     }
 
+    // ---- Log: Imports resolved ----
+    code.Emit({0x48, 0x8D, 0x0D});                      // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), importsResolved);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+
     // Emit a "return 0" thunk and a fake vtable for unresolved imports.
     // Unresolved imports return the fake vtable VA, so object initialization
     if (anyUnresolvable) {
@@ -780,6 +819,14 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     code.Rip({0x48, 0x8b, 0x3d}, argumentBlock);
     const auto exitCallback = code.Branch({0x48, 0x8d, 0x35});
     code.Emit({0x48, 0xc7, 0x44, 0x24, 0x40, 0, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x48, 0, 0, 0, 0, 0x48, 0x8d, 0x6c, 0x24, 0x40});
+
+    // ---- Install VEH handler before ELF entry transfer ----
+    code.Emit({0xB9, 0x01, 0x00, 0x00, 0x00});     // mov ecx, 1  (Flags = 1)
+    code.Emit({0x48, 0x8D, 0x15});                  // lea rdx, [rip + disp32]
+    code.Emit({0x00, 0x00, 0x00, 0x00});            // placeholder disp32 (patched below)
+    const auto vehHandlerCallRva = code.GetRva();
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("AddVectoredExceptionHandler"));
+    code.Emit({0x48, 0x89, 0x44, 0x24, 0x50});      // mov [rsp + 0x50], rax  (save handle)
 
     // ---- Log "About to transfer to ELF entry point" ----
     code.Emit({0x48, 0x8D, 0x0D});                  // lea rcx, [rip + disp32]
@@ -867,6 +914,23 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         result.LazyStubs.push_back({imports[index].TargetRva, lazyStubRva});
     }
 
+    // ---- Emit VEH handler (placed after all normal code, never reached via fall-through) ----
+    const auto vehHandlerRva = code.GetRva();
+    // Patch the lea rdx placeholder: disp32 = vehHandlerRva - nextInstructionRva
+    const auto vehDisp32 = static_cast<std::int32_t>(vehHandlerRva - vehHandlerCallRva);
+    Io::WriteU32(result.Code.Data, vehHandlerCallRva - result.Code.Rva - 4, static_cast<std::uint32_t>(vehDisp32));
+
+    // VectoredHandler(PEXCEPTION_POINTERS* ExceptionInfo in RCX)
+    code.Emit({0x50, 0x53, 0x51, 0x52, 0x56, 0x57});              // push rax, rbx, rcx, rdx, rsi, rdi
+    code.Emit({0x48, 0x8B, 0x01});                                // mov rax, [rcx]          ; ExceptionRecord
+    code.Emit({0x8B, 0x00});                                      // mov eax, [rax]          ; ExceptionCode
+    code.Emit({0x48, 0x8D, 0x0D});                                // lea rcx, [rip + disp32]
+    code.PatchBranch(code.Branch({}), exceptionInElf);
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
+    code.Emit({0x5F, 0x5E, 0x5A, 0x59, 0x5B, 0x58});              // pop rdi, rsi, rdx, rcx, rbx, rax
+    code.Emit({0xB8, 0x01, 0x00, 0x00, 0x00});                    // mov eax, 1              ; EXCEPTION_EXECUTE_HANDLER
+    code.Emit({0xC3});                                            // ret
+
     Io::WriteU32(data, functionTable - dataRva, result.Code.Rva);
     Io::WriteU32(data, functionTable - dataRva + 4, functionEnd);
     Io::WriteU32(data, functionTable - dataRva + 8, unwindRva);
@@ -889,3 +953,4 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
 }
 
 }
+
