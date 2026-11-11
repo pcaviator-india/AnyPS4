@@ -1,7 +1,7 @@
 {
   "pkg_folder": "C:/Users/Info-Tech/Downloads/Games/ps4",
-  "output_folder": "C:/Users/Info-Tech/Downloads/Games/ps4/export",
-  "temp_folder": "C:/Users/Info-Tech/Downloads/Games/ps4/temp",
+  "output_folder": "C:/PS4",
+  "temp_folder": "C:/PS4",
   "relinker_path": "c:\\PersonalProjects\\AnyPs4\\tools-fetch\\..\\AnyPS4\\build-relinker\\core\\relinker\\relinker.exe",
   "nid_patcher_path": "C:\\PersonalProjects\\AnyPs4\\AnyPS4\\build-full\\core\\libs\\nid_patcher.exe",
   "passcode": "00000000000000000000000000000000",

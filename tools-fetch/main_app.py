@@ -24,6 +24,8 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from phase2_stubs import create_missing_prx_stubs
+from prx_inventory import scan_libs, summary as inv_summary
+from prx_gap_analysis import needed_prx_names, analyze_gaps, print_gaps
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +488,148 @@ class App:
         self._refresh_prx_listbox()
         self._update_unwrapped_status()
 
+        # ---- Tab 3: PRX Inventory ----
+        tab_prx_inv = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab_prx_inv, text="PRX Inventory")
+
+        inv_libs_row = ttk.Frame(tab_prx_inv)
+        inv_libs_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(inv_libs_row, text="PRX libs directory:").pack(side=tk.LEFT)
+        self.prx_inv_libs_dir = tk.StringVar(value=str(Path("libs").resolve()))
+        ttk.Entry(inv_libs_row, textvariable=self.prx_inv_libs_dir).pack(
+            side=tk.LEFT, padx=4, fill=tk.X, expand=True
+        )
+        ttk.Button(
+            inv_libs_row, text="Browse",
+            command=self._browse_prx_inv_libs
+        ).pack(side=tk.LEFT)
+
+        inv_btn_row = ttk.Frame(tab_prx_inv)
+        inv_btn_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Button(
+            inv_btn_row, text="Scan PRX Directory",
+            command=self._scan_prx_inventory
+        ).pack(side=tk.LEFT, padx=4)
+        ttk.Button(
+            inv_btn_row, text="Export JSON",
+            command=self._export_prx_inv_json
+        ).pack(side=tk.LEFT, padx=4)
+        ttk.Button(
+            inv_btn_row, text="Export CSV",
+            command=self._export_prx_inv_csv
+        ).pack(side=tk.LEFT, padx=4)
+
+        self.prx_inv_summary = tk.StringVar(value="No scan performed yet")
+        ttk.Label(
+            tab_prx_inv, textvariable=self.prx_inv_summary,
+            relief=tk.SUNKEN, anchor=tk.W
+        ).pack(fill=tk.X, pady=(0, 8))
+
+        inv_tree_frame = ttk.Frame(tab_prx_inv)
+        inv_tree_frame.pack(fill=tk.BOTH, expand=True)
+        self.prx_inv_tree = ttk.Treeview(
+            inv_tree_frame,
+            columns=("status", "size", "exports"),
+            show="tree headings",
+            height=15,
+        )
+        self.prx_inv_tree.heading("#0", text="PRX Name")
+        self.prx_inv_tree.heading("status", text="Status")
+        self.prx_inv_tree.heading("size", text="Size")
+        self.prx_inv_tree.heading("exports", text="Exports")
+        self.prx_inv_tree.column("#0", width=300, anchor=tk.W)
+        self.prx_inv_tree.column("status", width=120, anchor=tk.CENTER)
+        self.prx_inv_tree.column("size", width=100, anchor=tk.E)
+        self.prx_inv_tree.column("exports", width=80, anchor=tk.E)
+        inv_scroll = ttk.Scrollbar(
+            inv_tree_frame, orient=tk.VERTICAL,
+            command=self.prx_inv_tree.yview
+        )
+        self.prx_inv_tree.configure(yscrollcommand=inv_scroll.set)
+        self.prx_inv_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        inv_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.prx_inv_data = {}
+
+        # ---- Tab 4: PRX Gap Analysis ----
+        tab_prx_gap = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(tab_prx_gap, text="PRX Gap Analysis")
+
+        gap_libs_row = ttk.Frame(tab_prx_gap)
+        gap_libs_row.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(gap_libs_row, text="PRX libs directory:").pack(side=tk.LEFT)
+        self.prx_gap_libs_dir = tk.StringVar(value=str(Path("libs").resolve()))
+        ttk.Entry(gap_libs_row, textvariable=self.prx_gap_libs_dir).pack(
+            side=tk.LEFT, padx=4, fill=tk.X, expand=True
+        )
+        ttk.Button(
+            gap_libs_row, text="Browse",
+            command=self._browse_prx_gap_libs
+        ).pack(side=tk.LEFT)
+
+        gap_exp_row = ttk.Frame(tab_prx_gap)
+        gap_exp_row.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(gap_exp_row, text="Export directory:").pack(side=tk.LEFT)
+        self.prx_gap_exp_dir = tk.StringVar(
+            value=str(Path("../AnyPS4").resolve()
+                      / "build-full" / "core" / "libs" / "libs" / "unpatched")
+        )
+        ttk.Entry(gap_exp_row, textvariable=self.prx_gap_exp_dir).pack(
+            side=tk.LEFT, padx=4, fill=tk.X, expand=True
+        )
+        ttk.Button(
+            gap_exp_row, text="Browse",
+            command=self._browse_prx_gap_exp
+        ).pack(side=tk.LEFT)
+
+        gap_imports_row = ttk.Frame(tab_prx_gap)
+        gap_imports_row.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(gap_imports_row, text="Imports file:").pack(side=tk.LEFT)
+        self.prx_gap_imports_file = tk.StringVar(value=str(Path("imports.txt").resolve()))
+        ttk.Entry(gap_imports_row, textvariable=self.prx_gap_imports_file).pack(
+            side=tk.LEFT, padx=4, fill=tk.X, expand=True
+        )
+        ttk.Button(
+            gap_imports_row, text="Browse",
+            command=self._browse_prx_gap_imports
+        ).pack(side=tk.LEFT)
+
+        gap_missing_row = ttk.Frame(tab_prx_gap)
+        gap_missing_row.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(gap_missing_row, text="Missing file:").pack(side=tk.LEFT)
+        self.prx_gap_missing_file = tk.StringVar(value=str(Path("missing.txt").resolve()))
+        ttk.Entry(gap_missing_row, textvariable=self.prx_gap_missing_file).pack(
+            side=tk.LEFT, padx=4, fill=tk.X, expand=True
+        )
+        ttk.Button(
+            gap_missing_row, text="Browse",
+            command=self._browse_prx_gap_missing
+        ).pack(side=tk.LEFT)
+
+        gap_btn_row = ttk.Frame(tab_prx_gap)
+        gap_btn_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Button(
+            gap_btn_row, text="Analyze Gaps",
+            command=self._analyze_prx_gaps
+        ).pack(side=tk.LEFT, padx=4)
+        ttk.Button(
+            gap_btn_row, text="Export JSON",
+            command=self._export_prx_gap_json
+        ).pack(side=tk.LEFT, padx=4)
+
+        gap_result_frame = ttk.Frame(tab_prx_gap)
+        gap_result_frame.pack(fill=tk.BOTH, expand=True)
+        self.prx_gap_result = tk.Text(gap_result_frame, height=15, wrap=tk.WORD)
+        gap_result_scroll = ttk.Scrollbar(
+            gap_result_frame, orient=tk.VERTICAL,
+            command=self.prx_gap_result.yview
+        )
+        self.prx_gap_result.configure(yscrollcommand=gap_result_scroll.set)
+        self.prx_gap_result.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        gap_result_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.prx_gap_data = None
+
     # -------------------------------------------------------------- unwrapped files tab
     def _refresh_elf_listbox(self):
         self.elf_listbox.delete(0, tk.END)
@@ -579,6 +723,90 @@ class App:
             "stub generation, or relinking.",
         )
 
+    # ------------------------------------------------------------------ PRX Inventory tab callbacks
+    def _browse_prx_inv_libs(self):
+        d = filedialog.askdirectory(title="Select PRX libs directory")
+        if d:
+            self.prx_inv_libs_dir.set(d)
+
+    def _scan_prx_inventory(self):
+        libs_dir = self.prx_inv_libs_dir.get().strip()
+        if not libs_dir or not os.path.isdir(libs_dir):
+            messagebox.showerror("Error", f"Invalid directory: {libs_dir}")
+            return
+        try:
+            self.prx_inv_data = scan_libs(libs_dir)
+            summ = inv_summary(self.prx_inv_data)
+            self.prx_inv_summary.set(
+                f"Total: {summ['total']} | PE: {summ['pe_files']} | "
+                f"Converted: {summ['converted']} | Stubs: {summ['stubs']} | "
+                f"Missing/Not-PE: {summ['missing_or_not_pe']} | "
+                f"Exports: {summ['total_exports']:,}"
+            )
+            self._log(f"PRX Inventory scan: {summ}")
+            self.prx_inv_tree.delete(*self.prx_inv_tree.get_children())
+            status_icon = {
+                "CONVERTED": "✓",
+                "STUB": "⚠",
+                "NOT_PE": "✗",
+                "UNKNOWN": "?",
+            }
+            for name, entry in sorted(self.prx_inv_data.items()):
+                if entry["is_stub"]:
+                    status = "STUB"
+                elif entry["converted"]:
+                    status = "CONVERTED"
+                elif entry["is_pe"]:
+                    status = "PE (no exports)"
+                else:
+                    status = "NOT_PE"
+                icon = status_icon.get(status, "?")
+                self.prx_inv_tree.insert(
+                    "", tk.END,
+                    text=entry["name"],
+                    values=(f"{icon} {status}",
+                            f"{entry['size']:,}",
+                            entry["export_count"]),
+                )
+            self._log(f"  Scanned {summ['total']} PRX files in {libs_dir}")
+        except Exception as exc:
+            messagebox.showerror("Scan Error", str(exc))
+            self._log(f"PRX inventory scan failed: {exc}")
+
+    def _export_prx_inv_json(self):
+        if not self.prx_inv_data:
+            messagebox.showwarning("Warning", "No inventory data to export. Scan first.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export PRX inventory JSON",
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if path:
+            try:
+                from prx_inventory import write_json
+                write_json(self.prx_inv_data, path)
+                self._log(f"PRX inventory JSON exported to {path}")
+            except Exception as exc:
+                messagebox.showerror("Export Error", str(exc))
+
+    def _export_prx_inv_csv(self):
+        if not self.prx_inv_data:
+            messagebox.showwarning("Warning", "No inventory data to export. Scan first.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export PRX inventory CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if path:
+            try:
+                from prx_inventory import write_csv
+                write_csv(self.prx_inv_data, path)
+                self._log(f"PRX inventory CSV exported to {path}")
+            except Exception as exc:
+                messagebox.showerror("Export Error", str(exc))
+
     def _folder_row(self, parent, label, variable, browse_command):
         row = ttk.Frame(parent)
         row.pack(fill=tk.X, pady=4)
@@ -587,6 +815,121 @@ class App:
             side=tk.LEFT, padx=4, fill=tk.X, expand=True
         )
         ttk.Button(row, text="Browse", command=browse_command).pack(side=tk.LEFT)
+
+    # ------------------------------------------------------------------ PRX Gap Analysis tab callbacks
+    def _browse_prx_gap_libs(self):
+        d = filedialog.askdirectory(title="Select PRX libs directory")
+        if d:
+            self.prx_gap_libs_dir.set(d)
+
+    def _browse_prx_gap_exp(self):
+        d = filedialog.askdirectory(title="Select export directory")
+        if d:
+            self.prx_gap_exp_dir.set(d)
+
+    def _browse_prx_gap_imports(self):
+        f = filedialog.askopenfilename(
+            title="Select imports.txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if f:
+            self.prx_gap_imports_file.set(f)
+
+    def _browse_prx_gap_missing(self):
+        f = filedialog.askopenfilename(
+            title="Select missing.txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if f:
+            self.prx_gap_missing_file.set(f)
+
+    def _analyze_prx_gaps(self):
+        libs_dir = self.prx_gap_libs_dir.get().strip()
+        export_dir = self.prx_gap_exp_dir.get().strip()
+        imports_path = self.prx_gap_imports_file.get().strip()
+        missing_path = self.prx_gap_missing_file.get().strip()
+
+        if not libs_dir or not os.path.isdir(libs_dir):
+            messagebox.showerror("Error", f"Invalid libs directory: {libs_dir}")
+            return
+
+        try:
+            inventory = scan_libs(libs_dir)
+            needed = needed_prx_names(export_dir, imports_path, missing_path)
+            gaps = analyze_gaps(libs_dir, needed, inventory)
+            self.prx_gap_data = {
+                "libs_dir": libs_dir,
+                "export_dir": export_dir,
+                "imports_path": imports_path,
+                "missing_path": missing_path,
+                "gaps": gaps,
+            }
+
+            lines = []
+            lines.append("=== PRX Gap Analysis ===")
+            lines.append(f"Needed PRXs:       {gaps['needed_count']}")
+            lines.append(f"Available PRXs:    {gaps['available_count']}")
+            lines.append("")
+            if gaps["missing_prxs"]:
+                lines.append(f"MISSING ({len(gaps['missing_prxs'])}):")
+                for name in gaps["missing_prxs"]:
+                    lines.append(f"  {name}")
+                lines.append("")
+            if gaps["not_pe_prxs"]:
+                lines.append(f"NOT_PE ({len(gaps['not_pe_prxs'])}):")
+                for name in gaps["not_pe_prxs"]:
+                    lines.append(f"  {name}")
+                lines.append("")
+            if gaps["stub_only_prxs"]:
+                lines.append(f"STUB_ONLY ({len(gaps['stub_only_prxs'])}):")
+                for name in gaps["stub_only_prxs"]:
+                    lines.append(f"  {name}")
+                lines.append("")
+            if gaps["converted_prxs"]:
+                lines.append(f"CONVERTED ({len(gaps['converted_prxs'])}):")
+                for name in gaps["converted_prxs"]:
+                    lines.append(f"  {name}")
+                lines.append("")
+            if gaps["unneeded_prxs"]:
+                lines.append(f"UNNEEDED ({len(gaps['unneeded_prxs'])}):")
+                for name in gaps["unneeded_prxs"]:
+                    lines.append(f"  {name}")
+                lines.append("")
+            total_gaps = (
+                len(gaps["missing_prxs"])
+                + len(gaps["not_pe_prxs"])
+                + len(gaps["stub_only_prxs"])
+            )
+            if total_gaps == 0:
+                lines.append("All needed PRXs are fully converted. No gaps.")
+            else:
+                lines.append(f"Total gaps needing attention: {total_gaps}")
+
+            result_text = "\n".join(lines)
+            self.prx_gap_result.delete("1.0", tk.END)
+            self.prx_gap_result.insert(tk.END, result_text)
+            self._log(f"Gap analysis complete: {total_gaps} gap(s) found")
+        except Exception as exc:
+            messagebox.showerror("Analysis Error", str(exc))
+            self._log(f"Gap analysis failed: {exc}")
+
+    def _export_prx_gap_json(self):
+        if not self.prx_gap_data:
+            messagebox.showwarning("Warning", "No gap analysis data to export. Analyze first.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export gap analysis JSON",
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if path:
+            try:
+                import json as _json
+                with open(path, "w", encoding="utf-8") as f:
+                    _json.dump(self.prx_gap_data, f, indent=2)
+                self._log(f"Gap analysis JSON exported to {path}")
+            except Exception as exc:
+                messagebox.showerror("Export Error", str(exc))
 
     def _ui(self, callback, *args):
         """Schedule a UI operation on Tk's main thread."""
