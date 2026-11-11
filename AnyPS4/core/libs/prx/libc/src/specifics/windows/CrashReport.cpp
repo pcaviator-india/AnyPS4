@@ -37,7 +37,6 @@ void Report(const char* format, ...) {
 void ReportAllThreads();
 void ReportStackCandidates(std::uint64_t rsp, int limit, std::uint64_t span);
 void ReportCallTrace();
-
 void DescribeAddress(std::uint64_t address, char* buffer, std::size_t size) {
     HMODULE module = nullptr;
     char path[MAX_PATH] = "?";
@@ -233,7 +232,7 @@ constexpr DWORD GccException = 0x20474343u;
 constexpr std::uint64_t GccExceptionClass = 0x474e5543432b2b00ull;
 constexpr std::uint64_t CxaExceptionTypeOffset = 80;
 
-std::uint64_t FrameWithoutUnwindData(const CONTEXT& start) {
+std::uint64_t FrameWithoutUnwindData(const CONTEXT& start, CONTEXT& recovered) {
     const HMODULE runtime[] = {GetModuleHandleA("KERNELBASE.dll"), GetModuleHandleA("libgcc_s_seh-1.dll"), GetModuleHandleA("libstdc++-6.dll")};
     CONTEXT context = start;
     for (int depth = 0; depth < 64 && context.Rip != 0; ++depth) {
@@ -241,7 +240,10 @@ std::uint64_t FrameWithoutUnwindData(const CONTEXT& start) {
         GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCSTR>(context.Rip), &module);
         DWORD64 imageBase = 0;
         const auto entry = RtlLookupFunctionEntry(context.Rip, &imageBase, nullptr);
-        if (module == nullptr || std::find(std::begin(runtime), std::end(runtime), module) == std::end(runtime)) return entry == nullptr ? context.Rip : 0;
+        if (module == nullptr || std::find(std::begin(runtime), std::end(runtime), module) == std::end(runtime)) {
+            recovered = context;
+            return entry == nullptr ? context.Rip : 0;
+        }
         if (entry == nullptr) return 0;
         PVOID handlerData = nullptr;
         DWORD64 establisher = 0;
@@ -288,16 +290,59 @@ bool HandleSse4a(EXCEPTION_POINTERS* info) {
     return true;
 }
 
+struct CrashReportInstaller;
+extern CrashReportInstaller g_crashReportInstaller;
+
 LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
+    // Keep installer linked so its constructor (which installs the VEH
+    // handler) is not eliminated by the linker.
+    (void)&g_crashReportInstaller;
+    Report("ReportCrash called\\n");
     static std::atomic<bool> reported{false};
     const auto* fault = info->ExceptionRecord;
     if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 1 && GuestArena::GuestArenaHandleWrite_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
     if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 0 && GuestArena::GuestArenaHandleRead_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleWatch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleSse4a(info)) return EXCEPTION_CONTINUE_EXECUTION;
+    // Shim for invalid-pointer writes during early game initialization.
+    // PS4 code sometimes dereferences pointers returned by failed allocations.
+    // Windows can't map the NULL page, so we redirect any GP register that
+    // holds the fault address to a scratch buffer, letting initialization proceed.
+    if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2) {
+        const auto faultAddr = static_cast<std::uintptr_t>(fault->ExceptionInformation[1]);
+        const bool isWrite = fault->ExceptionInformation[0] == 1;
+        if (isWrite) {
+            auto* ctx = info->ContextRecord;
+            static thread_local void* scratch = nullptr;
+            if (!scratch) scratch = VirtualAlloc(nullptr, 0x4000, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+            if (scratch) {
+                // Redirect any GP register matching the fault address to scratch.
+                std::uintptr_t* regs[] = {&ctx->Rax, &ctx->Rcx, &ctx->Rdx, &ctx->Rbx,
+                                          &ctx->Rsi, &ctx->Rdi, &ctx->R8,  &ctx->R9,
+                                          &ctx->R10, &ctx->R11, &ctx->R12, &ctx->R13,
+                                          &ctx->R14, &ctx->R15};
+                for (auto* reg : regs) {
+                    if (*reg == faultAddr) {
+                        *reg = reinterpret_cast<std::uintptr_t>(scratch);
+                        Report("Invalid-pointer write redirected: reg=%p -> scratch=%p, fault=0x%llx\\n",
+                               reinterpret_cast<void*>(*reg), scratch,
+                               static_cast<unsigned long long>(faultAddr));
+                        return EXCEPTION_CONTINUE_EXECUTION;
+                    }
+                }
+            }
+        }
+    }
     const auto* record = info->ExceptionRecord;
     if ((record->ExceptionCode & GccExceptionMask) == GccException) {
-        if (const auto frame = FrameWithoutUnwindData(*info->ContextRecord)) ReportUndeliverableException(info, frame);
+        CONTEXT recovered{};
+        if (const auto frame = FrameWithoutUnwindData(*info->ContextRecord, recovered)) {
+            // C++ exception thrown from a frame without unwind data: unwind through
+            // runtime frames and resume at the caller, swallowing the exception.
+            ReportUndeliverableException(info, frame);
+            *info->ContextRecord = recovered;
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
         return EXCEPTION_CONTINUE_SEARCH;
     }
     if (!IsFatal(record->ExceptionCode)) return EXCEPTION_CONTINUE_SEARCH;
@@ -565,24 +610,26 @@ struct ExitReporter {
     }
 } g_exitReporter;
 
-const bool g_crashReportInstalled = [] {
-    g_sse4aEmulation = !IsEnvironmentSet("APS5_NO_SSE4A_EMULATION");
-    g_sse4aTrace = IsEnvironmentSet("APS5_TRACE_SSE4A");
-    AddVectoredExceptionHandler(1, ReportCrash);
-    std::signal(SIGABRT, AbortSignalHandler);
-    _set_invalid_parameter_handler(InvalidParameterHandler);
-    InstallWatch();
-    if (const char* hang = std::getenv("APS5_HANG_DUMP_SECS")) {
-        unsigned long long seconds = 0;
-        if (hang[0] >= '0' && hang[0] <= '9') {
-            char* end = nullptr;
-            const auto value = std::strtoull(hang, &end, 10);
-            if (end && *end == 0) seconds = value;
+struct CrashReportInstaller {
+    CrashReportInstaller() {
+        g_sse4aEmulation = !IsEnvironmentSet("APS5_NO_SSE4A_EMULATION");
+        g_sse4aTrace = IsEnvironmentSet("APS5_TRACE_SSE4A");
+        AddVectoredExceptionHandler(1, ReportCrash);
+        std::signal(SIGABRT, AbortSignalHandler);
+        _set_invalid_parameter_handler(InvalidParameterHandler);
+        InstallWatch();
+        if (const char* hang = std::getenv("APS5_HANG_DUMP_SECS")) {
+            unsigned long long seconds = 0;
+            if (hang[0] >= '0' && hang[0] <= '9') {
+                char* end = nullptr;
+                const auto value = std::strtoull(hang, &end, 10);
+                if (end && *end == 0) seconds = value;
+            }
+            if (seconds > 0) CreateThread(nullptr, 0, HangWatchdog, reinterpret_cast<LPVOID>(static_cast<std::uintptr_t>(seconds)), 0, nullptr);
         }
-        if (seconds > 0) CreateThread(nullptr, 0, HangWatchdog, reinterpret_cast<LPVOID>(static_cast<std::uintptr_t>(seconds)), 0, nullptr);
     }
-    return true;
-}();
-
+};
+CrashReportInstaller g_crashReportInstaller;
 }
+
 #endif

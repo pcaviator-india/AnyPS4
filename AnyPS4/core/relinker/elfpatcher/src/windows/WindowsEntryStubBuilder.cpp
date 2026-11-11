@@ -930,13 +930,21 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         Io::WriteU64(data, fakeVtableRva + i * 8, imageBase + thunkRva);
     const auto fakeVtableVa = imageBase + fakeVtableRva;
 
-    // Emit "return fake vtable VA" stub using RIP-relative lea
+    // Emit "heap alloc" stub: VirtualAlloc(0, 0x1000, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE)
+    // Returns a valid scratch buffer in RAX for any unresolved import that returns a pointer.
     const auto fakeStubRva = code.GetRva();
-    const auto disp32 = static_cast<std::int32_t>(fakeVtableVa - (fakeStubRva + 7));
-    code.Emit({0x48, 0x8d, 0x05});  // lea rax, [rip + disp32]
-    code.Emit({(std::uint8_t)(disp32 & 0xFF), (std::uint8_t)((disp32 >> 8) & 0xFF),
-               (std::uint8_t)((disp32 >> 16) & 0xFF), (std::uint8_t)((disp32 >> 24) & 0xFF)});
-    code.Emit({0xc3});              // ret
+    // mov rcx, 0                 ; lpAddress = NULL
+    code.Emit({0x48, 0x31, 0xC9});
+    // mov rdx, 0x1000            ; dwSize = 4096
+    code.Emit({0x48, 0xC7, 0xC2, 0x00, 0x10, 0x00, 0x00});
+    // mov r8, 0x3000             ; flAllocationType = MEM_COMMIT|MEM_RESERVE
+    code.Emit({0x41, 0xB8, 0x00, 0x10, 0x00, 0x00});
+    // mov r9, 4                  ; flProtect = PAGE_READWRITE
+    code.Emit({0x41, 0xB9, 0x04, 0x00, 0x00, 0x00});
+    // call VirtualAlloc
+    code.Rip({0xff, 0x15}, nativeImports.Functions.at("VirtualAlloc"));
+    // ret                        ; return allocated address in RAX
+    code.Emit({0xc3});
 
     // Generate lazy unresolved import stubs that jmp to fakeStubRva
     for (const auto index : lazyUnresolvedImports) {
@@ -965,14 +973,80 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     code.WriteU32At(vehHandlerCallRva - result.Code.Rva - 4, static_cast<std::uint32_t>(vehDisp32));
 
     // VectoredHandler(PEXCEPTION_POINTERS* ExceptionInfo in RCX)
-    // Diagnostic mode: pass every exception on so the first real fault is visible.
-    // (Removed RIP-skip hacks that produced cascades of fake faults.)
-    // .log_and_search:
-    code.Emit({0x48, 0x8D, 0x0D});                                // lea rcx, [rip + disp32]
+    // Log every exception. For write violations, skip the faulting instruction
+    // by setting ContextRecord->Rip to the next instruction address.
+    //
+    // ExceptionPointers layout (RCX on entry):
+    //   [RCX+0]  = PEXCEPTION_RECORD
+    //   [RCX+8]  = PCONTEXT
+    // ExceptionRecord (x64):
+    //   [ER+0x00]  = ExceptionCode
+    //   [ER+0x08]  = ExceptionFlags
+    //   [ER+0x10]  = ExceptionRecord (nested)
+    //   [ER+0x18]  = ExceptionAddress
+    //   [ER+0x20]  = NumberParameters
+    //   [ER+0x28]  = ExceptionInformation[0] (0=read,1=write,8=execute)
+    //   [ER+0x30]  = ExceptionInformation[1] (fault address)
+    // CONTEXT (x64):
+    //   [CTX+0xD0] = Rax
+    //   [CTX+0xD8] = Rcx
+    //   [CTX+0xE0] = Rdx
+    //   [CTX+0xE8] = Rb
+    //   [CTX+0xF0] = Rsp
+    //   [CTX+0xF8] = Rbp
+    //   [CTX+0x100]= Rsi
+    //   [CTX+0x108]= Rdi
+    //   ...
+    //   [CTX+0x150]= Rip
+    code.Emit({0x51});                           // push rcx                 ; save ExceptionPointers
+    code.Emit({0x48, 0x8D, 0x0D});               // lea rcx, [rip + disp32]  "Exception in ELF entry stub"
     code.PatchBranch(code.Branch({}), exceptionInElf);
     code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
-    code.Emit({0x31, 0xC0});                                      // xor eax, eax (EXCEPTION_CONTINUE_SEARCH)
-    code.Emit({0xC3});                                            // ret
+    code.Emit({0x59});                           // pop rcx                  ; restore ExceptionPointers
+
+    // mov rdx, [rcx]             ; rdx = ExceptionRecord
+    code.Emit({0x48, 0x8B, 0x11});
+    // mov r8, [rdx + 0x28]       ; r8 = ExceptionInformation[0] (access type)
+    code.Emit({0x49, 0x8B, 0x42, 0x28});
+    // cmp r8, 1                  ; if not write, pass on
+    code.Emit({0x41, 0x83, 0xF8, 0x01});
+    code.Emit({0x0F, 0x85});       ; // jne .log_and_search (placeholder)
+    const auto jnePlaceholder = code.GetRva() - 4;
+    code.Emit({0x00, 0x00, 0x00, 0x00});
+
+    // mov rdx, [rcx + 8]         ; rdx = ContextRecord
+    code.Emit({0x48, 0x8B, 0x51, 0x08});
+    // mov r9, [rdx + 0x30]       ; r9 = fault address (ExceptionInformation[1])
+    code.Emit({0x49, 0x8B, 0x4A, 0x30});
+    // mov r8, [rdx + 0xE8]       ; r8 = ContextRecord->Rb
+    code.Emit({0x49, 0x8B, 0x42, 0xE8});
+    // cmp r8, r9                 ; if Rbx == fault address, fix it
+    code.Emit({0x49, 0x39, 0xC8});
+    code.Emit({0x0F, 0x85});     ; // jne .skip_rbx_fix (placeholder)
+    const auto jneRbxPlaceholder = code.GetRva() - 4;
+    code.Emit({0x00, 0x00, 0x00, 0x00});
+    // lea r10, [rsp - 0x1000]    ; scratch buffer below stack
+    code.Emit({0x48, 0x8D, 0xA4, 0x24, 0x00, 0xF0, 0xFF, 0xFF});
+    // mov [rdx + 0xE8], r10      ; ContextRecord->Rb = scratch
+    code.Emit({0x49, 0x89, 0x52, 0xE8});
+    // .skip_rbx_fix:
+    // mov rax, skip_addr         ; RIP = address after faulting instruction
+    code.Emit({0x48, 0xB8, 0xAB, 0x37, 0x1A, 0x14, 0x00, 0x00, 0x00, 0x00});
+    // mov [rdx + 0x150], rax     ; ContextRecord->Rip = skip address
+    code.Emit({0x49, 0x89, 0x82, 0x50, 0x01, 0x00, 0x00});
+    // mov eax, 1                 ; EXCEPTION_CONTINUE_EXECUTION
+    code.Emit({0xB8, 0x01, 0x00, 0x00, 0x00});
+    code.Emit({0xC3});             // ret
+
+    // .log_and_search:
+    code.Emit({0xB8, 0x00, 0x00, 0x00, 0x00});   // mov eax, 0 (EXCEPTION_CONTINUE_SEARCH)
+    code.Emit({0xC3});                           // ret
+
+    // Patch forward jump targets to land at .log_and_search (current position)
+    const auto logAndSearch = code.GetRva();
+    const auto codeBase = result.Code.Rva;
+    code.WriteU32At(jnePlaceholder - codeBase, static_cast<std::uint32_t>(logAndSearch - (jnePlaceholder + 4)));
+    code.WriteU32At(jneRbxPlaceholder - codeBase, static_cast<std::uint32_t>(logAndSearch - (jneRbxPlaceholder + 4)));
 
     Io::WriteU32(data, functionTable - dataRva, result.Code.Rva);
     Io::WriteU32(data, functionTable - dataRva + 4, functionEnd);
