@@ -1,119 +1,88 @@
-# AnyPS4 Porting Toolchain — Phase 2 Implementation Plan
+﻿# AnyPS4 Porting Toolchain - Phase 2 Plan
 
 ## Goal
 
-Enable `Limbo.PS4-PRELUDE` to execute successfully past ELF entry point transfer, load game assets, and run properly on Windows.
+Run `Limbo.PS4-PRELUDE` past ELF entry, load assets, initialise graphics and run on Windows.
 
-## Current State — GAME REACHES ELF ENTRY POINT ✅
+## Current State (2026-11-11)
 
-The game now successfully:
-- Transfers control to ELF entry point (`Transferring control to ELF entry point`)
-- Loads all 128 PRXs from `libs/` (all valid Windows PE DLLs)
-- Resolves imports by scanning PRX export tables
-- Begins executing ELF code
+- Control reaches the ELF entry point and the game runs for a while (heap init, allocator, C++ static init).
+- All 128 PRXs are valid PE DLLs and load when the three MinGW runtime DLLs sit next to `app.exe`.
+- With the NID-patched PRXs deployed, unresolved ELF imports dropped from 1150 to 146.
+- The process still crashes: `AgcDriver::DisplayBufferSize` (`libSceAgcDriver.prx`) throws `std::runtime_error` and the unwinder finds no unwind data for that frame; later, write faults occur in game code.
 
-## Root Causes Identified & Status
+## Root Causes and Status
 
-### 1. Fake VTable / Lazy Stubs Displacement Calculation Bug (Fixed)
-**Status**: [x] Completed.
+| # | Item | Status |
+|---|------|--------|
+| 1 | Fake vtable / lazy stub displacement bug | [x] Fixed |
+| 2 | VEH ABI and return value (shadow space, `CONTINUE_SEARCH`) | [x] Fixed |
+| 3 | Heap allocator verification rejecting the default API | [x] Fixed |
+| 4 | libc/libkernel symbol compatibility (`preserve_exports.txt`) | [x] Fixed |
+| 5 | All 128 PRXs converted with exports | [x] Fixed |
+| 6 | PRX inventory / gap analysis GUI tabs | [x] Done |
+| 7 | **"Missing PT_LOAD segments" theory** | [x] **Disproved**: two PT_LOAD segments are normal; the ELF has no section headers, and the earlier crash addresses were produced by the VEH skipping RIP |
+| 8 | VEH RIP-skip hacks and bogus `VirtualAlloc(0, 2^60)` page-0 map | [x] Removed (VEH now passes exceptions on) |
+| 9 | **Unpatched PRXs deployed** (exports not NIDs) -> 1150 unresolved imports -> `sceKernelMapDirectMemory` returned NULL -> write to `[0+0x20]` | [x] Fixed by deploying `build-full/core/libs/libs/*.prx` |
+| 10 | `AgcDriver::DisplayBufferSize` throws, no unwind data for the frame | [ ] Open (current blocker) |
+| 11 | 146 remaining unresolved imports | [ ] Open |
+| 12 | Local `VirtualAlloc` fallback in `sceKernelMapDirectMemory(2)` hides mapping failures | [ ] Review / remove |
+| 13 | `nid_db.xml` empty (0 entries) | [ ] Open |
 
-### 2. Broken Vectored Exception Handler ABI & Return Value (Fixed)
-**Status**: [x] Completed.
+## Next Steps (priority order)
 
-### 3. Heap Allocator Verification Rejection (Fixed)
-**Status**: [x] Completed.
+1. [ ] **VEH diagnostics**: add an env-var-gated trace (code, RIP module+offset, fault type/address, registers, bytes at RIP) in `WindowsEntryStubBuilder.cpp`; delete the unreachable skip code.
+2. [ ] **AgcDriver failure**:
+   - find which `DisplayBuffer` field `DisplayBufferSize` rejects (arguments come from the game's `sceVideoOut*` / `sceGnm*` calls);
+   - check `.pdata`/`.xdata` coverage in `libSceAgcDriver.prx` (4976 entries, none cover RVA `0x471e`): see how the PRX is linked and whether the NID patch or section layout drops unwind data, and whether `configure_windows_unwind` applies to this target.
+3. [ ] **Remaining 146 imports**: relink without `--lazy-binding`, run `app_trace.exe` with `APS5_TRACE_CALLS=all`, name NIDs by hashing, implement or map them in the right PRX.
+4. [ ] **Deploy tooling**: make `tools-fetch/main_app.py` copy the patched PRXs and the MinGW runtime DLLs; stop using the `unpatched` set.
+5. [ ] **Remove workarounds**: libkernel `VirtualAlloc` fallbacks, lazy-binding fake vtable once real paths work.
+6. [ ] **Fix `tools-fetch/reloc_diagnostic.py`** to parse program headers and `DT_RELA`/`DT_JMPREL` when section headers are absent.
+7. [ ] **Populate `nid_db.xml`** (or load names via `AnyPS4/tools/nid_names.py`) so `nid_lookup.py` returns names.
+8. [ ] Then: asset loading, file I/O, graphics init.
 
-### 4. Broken Libkernel PRX / Libc Symbol Compatibility (Fixed)
-**Status**: [x] Completed.
+## Debugging Cheat Sheet
 
-### 5. All 128 PRXs Converted to Windows PE DLLs (Fixed)
-**Status**: [x] Completed.
-- Previously 16 stub PRXs with 0-4 exports
-- Now all 128 PRXs have full export tables (137,316 total exports)
-- Key fixes: `libSceSsl.prx` (0→28 exports), `libSceAudioIn.prx` (0→8 exports)
-
-### 6. PRX Inventory & Gap Analysis GUI Tabs (Fixed)
-**Status**: [x] Completed.
-- PRX Inventory tab: Scan libs directory, see each PRX status
-- PRX Gap Analysis tab: Compare needed vs converted PRXs
-
-### 7. Crash After ELF Entry Point — ROOT CAUSE FOUND (Fix in progress)
-
-**Status**: [ ] Root cause identified, fix in progress.
-
-**Crash symptoms**:
-```
-Access violation write at 0x0000000000000020
-Access violation write at 0x00000000ffffff88
-Access violation read at 0x00000000000001e7
-Access violation read at 0x00000005c4dee52d
-```
-
-**Root cause**: The ELF has only TWO PT_LOAD segments:
-- Segment 1: `vaddr=0x0, memsz=0x4e6f88` (RX) - covers 0x0 to 0x4e6f88
-- Segment 2: `vaddr=0x4e8000, memsz=0x87a00` (RW) - covers 0x4e8000 to 0x56fa00
-
-**ALL crash addresses are OUTSIDE these segments:**
-- 0x60f4c0, 0xaf31c7, 0xafdda6, 0xafddab, 0xafddac, 0xafddad — all ABOVE 0x56fa00
-- 0xD15851E8, 0x5C4DEE52D — way outside
-
-**Why NOPping doesn't work**: The game tries to execute code at addresses not covered by any PT_LOAD segment. These are valid code sections (like `.startup` at VA 0x586000) that were never mapped into memory because the segment mapping in the PE conversion is incomplete. NOPping individual instructions would silently break initialization without fixing the root cause.
-
-**Fix needed**: Extend PT_LOAD segments or add missing segments in `WindowsPePatcher.cpp` to cover all code sections above 0x56fa00.
-
-**Action items**:
-1. Extend PT_LOAD segment mapping in `WindowsPePatcher.cpp` to cover all code sections
-2. Run `tools-fetch/reloc_diagnostic.py` to verify segment coverage after fix
-3. Re-test game execution
-
-## Next Steps (Priority Order)
-
-1. [ ] Fix PT_LOAD segment mapping in `WindowsPePatcher.cpp` to cover all code sections
-2. [ ] Run `tools-fetch/reloc_diagnostic.py` to verify all addresses are inside segments
-3. [ ] Re-test game execution — should progress past entry point crashes
-4. [ ] Investigate subsequent runtime milestones (asset loading, file I/O, graphics init)
+- PE image base `0x140000000`; ELF vaddr 0 is RVA `0x10000`: `ELF vaddr = RVA - 0x10000`; for `objdump -b binary`, file offset = vaddr + `0x4000`.
+- Import stubs are `ff 25 <rel32>; 68 <idx>; e9 ...`; `<idx>` indexes `DT_SCE_JMPREL` (Orbis dynamic tags: strtab `0x18`, symtab `0x2868`, jmprel `0x5be0`, relative to the SCE dynlib segment at file offset `0x515be0`).
+- NID = base64url-ish(SHA-1(name + `518D64A635DED8C1E6B039B1C3E55230`)[:8] reversed), `/` replaced by `-`.
+- `trace_app.py` attaches a debugger and prints first/second-chance exceptions, debug strings and exit code; `APS5_TRACE_CALLS=all` with a `--trace-imports` build lists unresolved imports.
+- `LoadLibrary` error 127 on a PRX usually means a missing dependency DLL or a missing export in a dependency (`libc.prx` is the root of the chain).
 
 ## Files
 
 ### Core C++
-- `AnyPS4/core/relinker/elfpatcher/src/windows/WindowsEntryStubBuilder.cpp` — VEH handler, entry point transfer
-- `AnyPS4/core/relinker/elfpatcher/src/windows/WindowsPePatcher.cpp` — Runtime PRX loading from libs/
-- `AnyPS4/core/libs/prx/libc/preserve_exports.txt` — C++ mangled export preservation
-- `AnyPS4/core/libs/prx/libSceSsl/Export.cpp` — SSL/TLS implementation (mbedTLS)
-- `AnyPS4/core/libs/prx/libSceAudioIn/Export.cpp` — Audio input implementation
+- `AnyPS4/core/relinker/elfpatcher/src/windows/WindowsEntryStubBuilder.cpp` - entry stub, VEH, import resolution
+- `AnyPS4/core/relinker/elfpatcher/src/windows/WindowsPePatcher.cpp` - PE writer
+- `AnyPS4/core/libs/CMakeLists.txt` - `libs` target (build then NID-patch every PRX)
+- `AnyPS4/core/libs/prx/libc/preserve_exports.txt` - exports kept un-hashed
+- `AnyPS4/core/libs/prx/libkernel/DirectMemory/Export.cpp` - direct memory (contains the local fallback)
+- `AnyPS4/core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` - crash reports, SSE4A emulation
 
-### Python Tools
-- `tools-fetch/main_app.py` — GUI pipeline with PRX Inventory & Gap Analysis tabs
-- `tools-fetch/prx_inventory.py` — PRX scanning and classification
-- `tools-fetch/prx_gap_analysis.py` — Gap analysis between needed vs converted
-- `tools-fetch/gen_stub_exports.py` — Generate APS5_EXPORT C++ code for stub PRXs
-- `tools-fetch/nop_crash.py` — NOP out crash instructions in PE
-- `tools-fetch/patch_sse4a.py` — Pre-patch SSE4A instructions in ELF
-- `tools-fetch/phase2_stubs.py` — Phase 2 NotImplemented stub DLL builder
+### Python tools (`tools-fetch/`)
+- `main_app.py` GUI pipeline; `prx_inventory.py`, `prx_gap_analysis.py`; `trace_app.py`; `reloc_diagnostic.py` (needs the fix above); `nid_lookup.py`, `nid_db.py`.
 
-### Documentation
-- `README.md` — Project overview and accomplishments
-- `plan.md` — This file
-
-## Build & Test Commands
+## Build and Test
 
 ```powershell
-# Build relinker
-cd C:\PersonalProjects\AnyPs4\AnyPs4\build-full
+# relinker
+cd C:\PersonalProjects\AnyPs4\AnyPS4\build-full
+$env:PATH='C:\PersonalProjects\AnyPs4\mingw15\mingw64\bin;'+$env:PATH
 cmake --build . --target relinker
 
-# Relink Limbo ELF
-cd C:\PersonalProjects\AnyPs4\AnyPs4\build-full\core\relinker
+# PRXs (NID-patched), ~4 minutes, then deploy
+cmake --build . --target libs -j 8
+robocopy core\libs\libs C:\PS4\export_Limbo.PS4-PRELUDE\libs *.prx
+
+# relink and run
+cd core\relinker
 .\relinker.exe --ps4 --lazy-binding --skip-sce-module --windows 'C:\PS4\export_Limbo.elf' 'C:\PS4\export_Limbo.PS4-PRELUDE\app.exe'
+cd C:\PS4\export_Limbo.PS4-PRELUDE; .\app.exe
 
-# Run game
-cd C:\PS4\export_Limbo.PS4-PRELUDE
-.\app.exe
-
-# Run with trace
+# trace
 cd C:\PersonalProjects\AnyPs4\tools-fetch
 python trace_app.py 'C:\PS4\export_Limbo.PS4-PRELUDE\app.exe' 'C:\PS4\export_Limbo.PS4-PRELUDE'
-
-# Check PRX status
-python main_app.py  # → PRX Inventory tab
 ```
+
+If `app.exe` is still running, relinking fails with "Cannot open output file"; stop the process first.
