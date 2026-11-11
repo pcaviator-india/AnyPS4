@@ -207,7 +207,7 @@ int LinuxProtFromSce(int prot) {
     int result = PROT_NONE;
     if (prot & 0x113) result |= PROT_READ;
     if (prot & 0x222) result |= PROT_READ | PROT_WRITE;
-    if (prot & 4) result |= PROT_READ | PROT_EXEC;
+    if (prot & 4) result |= PROT_READ | PROT_WRITE | PROT_EXEC;
     return result;
 }
 
@@ -905,7 +905,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     RequireAliasesUnpinned(mutation, static_cast<std::uint64_t>(physStart), len);
     std::lock_guard lock(g_directLock);
     ValidatePhysicalRange(static_cast<std::uint64_t>(physStart), len);
-    void* mapped = MapAligned(*addr, len, PROT_NONE, flags, alignment);
+    void* mapped = MapAligned(*addr, len, LinuxProtFromSce(prot), flags, alignment);
     try {
         AddMapping(reinterpret_cast<std::uintptr_t>(mapped), len, static_cast<std::uint64_t>(physStart), LinuxProtFromSce(prot));
         mutation.Add(mapped, len, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0);

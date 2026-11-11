@@ -965,14 +965,13 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     code.WriteU32At(vehHandlerCallRva - result.Code.Rva - 4, static_cast<std::uint32_t>(vehDisp32));
 
     // VectoredHandler(PEXCEPTION_POINTERS* ExceptionInfo in RCX)
-    code.Emit({0x50, 0x53, 0x51, 0x52, 0x56, 0x57});              // push rax, rbx, rcx, rdx, rsi, rdi
-    code.Emit({0x48, 0x8B, 0x01});                                // mov rax, [rcx]          ; ExceptionRecord
-    code.Emit({0x8B, 0x00});                                      // mov eax, [rax]          ; ExceptionCode
+    // Diagnostic mode: pass every exception on so the first real fault is visible.
+    // (Removed RIP-skip hacks that produced cascades of fake faults.)
+    // .log_and_search:
     code.Emit({0x48, 0x8D, 0x0D});                                // lea rcx, [rip + disp32]
     code.PatchBranch(code.Branch({}), exceptionInElf);
     code.Rip({0xff, 0x15}, nativeImports.Functions.at("OutputDebugStringA"));
-    code.Emit({0x5F, 0x5E, 0x5A, 0x59, 0x5B, 0x58});              // pop rdi, rsi, rdx, rcx, rbx, rax
-    code.Emit({0xB8, 0x01, 0x00, 0x00, 0x00});                    // mov eax, 1              ; EXCEPTION_EXECUTE_HANDLER
+    code.Emit({0x31, 0xC0});                                      // xor eax, eax (EXCEPTION_CONTINUE_SEARCH)
     code.Emit({0xC3});                                            // ret
 
     Io::WriteU32(data, functionTable - dataRva, result.Code.Rva);
